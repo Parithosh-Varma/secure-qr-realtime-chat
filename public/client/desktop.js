@@ -58,6 +58,10 @@ function log(...a) {
 function setGated(on) {
   gated = on;
   document.body.classList.toggle("gated", on);
+  const qrView = document.getElementById("qrView");
+  const chatView = document.getElementById("chatView");
+  if (qrView) qrView.style.display = on ? "grid" : "none";
+  if (chatView) chatView.style.display = on ? "none" : "grid";
 }
 function setStatus(t) { if (statusEl) statusEl.textContent = t; }
 function setTimer() {
@@ -84,10 +88,22 @@ function renderMe() {
 function updateSend() {
   if (sendBtn && inputEl) sendBtn.disabled = !(chatWs && chatWs.readyState === 1 && inputEl.value.trim());
 }
-function openModal() { modal?.classList.add("open"); }
+function openModal() {
+  // QR-only page: show qrView
+  setGated(true);
+  const qrView = document.getElementById("qrView");
+  const chatView = document.getElementById("chatView");
+  if (qrView) qrView.style.display = "grid";
+  if (chatView) chatView.style.display = "none";
+  modal?.classList.add("open");
+}
 function closeModal() {
   if (gated) return;
   modal?.classList.remove("open");
+  const qrView = document.getElementById("qrView");
+  const chatView = document.getElementById("chatView");
+  if (qrView) qrView.style.display = "none";
+  if (chatView) chatView.style.display = "grid";
 }
 function updateHero() {
   if (heroEl && msgsEl) heroEl.style.display = msgsEl.querySelector(".row") ? "none" : "";

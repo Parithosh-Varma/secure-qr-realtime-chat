@@ -6,194 +6,87 @@
   <title>Secure Chat — private</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@600&display=swap" rel="stylesheet">
   <script src="/client/qrcode.min.js"></script>
   <style>
-    :root{
-      --void:#0A0A0B; --soot:#101014; --card:#131318; --raised:#1C1D23; --raised-2:#26272E;
-      --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.13);
-      --txt:#ECECED; --mut:#9A9AA3; --dim:#6B6B74; --aura:#7AA2FF;
-    }
     *{box-sizing:border-box}
     html,body{height:100%}
-    body{margin:0; background:var(--void); color:var(--txt); font-family:"Inter",system-ui,sans-serif; font-size:15px; line-height:1.55; overflow:hidden; -webkit-font-smoothing:antialiased}
-    :focus-visible{outline:2px solid var(--aura); outline-offset:2px}
-    .mono{font-family:"JetBrains Mono",monospace}
+    body{margin:0; background:#0A0A0B; color:#ECECED; font-family:"Inter",system-ui,sans-serif; -webkit-font-smoothing:antialiased}
+    .qr-view{min-height:100dvh; display:grid; place-items:center; padding:24px}
+    .qr-card{width:min(360px,100%); text-align:center}
+    #qr{width:320px; height:320px; margin:0 auto; background:#fff; border-radius:20px; padding:16px; display:grid; place-items:center}
+    #qr canvas,#qr svg,#qr img{border-radius:12px; display:block; width:288px; height:288px}
+    #qr .empty{color:#6B6B74; font-size:13px}
+    .qr-card h1{margin:18px 0 0; font-family:"Inter Tight",sans-serif; font-size:18px; font-weight:600}
+    .hide{display:none !important}
+    /* chat — hidden until connected */
     .app{display:grid; grid-template-columns:220px 1fr; height:100dvh}
-    /* sidebar — identity only (2-person, no rooms list) */
-    .side{background:var(--soot); border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0}
-    .side-top{padding:14px 12px 6px; display:flex; flex-direction:column; gap:10px}
-    .logo{display:flex; align-items:center; gap:10px; padding:2px 6px}
-    .mark{width:30px; height:30px; border-radius:50%; background:#fff; color:#000; display:grid; place-items:center; font-weight:700; font-size:15px; font-family:"Inter Tight",sans-serif}
-    .logo b{font-family:"Inter Tight",sans-serif; font-size:14px; font-weight:600}
-    .side-foot{border-top:1px solid var(--line); padding:12px; margin-top:auto}
-    .user-card{display:flex; align-items:center; gap:10px; background:var(--void); border:1px solid var(--line); border-radius:12px; padding:9px 10px}
-    .avatar{width:30px; height:30px; border-radius:50%; background:#1E1F26; border:1px solid var(--line-2); display:grid; place-items:center; font-size:12px; font-weight:600; flex:0 0 auto}
+    .side{background:#101014; border-right:1px solid rgba(255,255,255,.08); display:flex; flex-direction:column}
+    .side-top{padding:14px 12px 6px}
+    .logo{display:flex; gap:10px; align-items:center; padding:2px 6px}
+    .mark{width:30px; height:30px; border-radius:50%; background:#fff; color:#000; display:grid; place-items:center; font-weight:700}
+    .logo b{font-family:"Inter Tight",sans-serif; font-size:14px}
+    .side-foot{border-top:1px solid rgba(255,255,255,.08); padding:12px; margin-top:auto}
+    .user-card{display:flex; gap:10px; align-items:center; background:#0A0A0B; border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:9px 10px}
+    .avatar{width:30px; height:30px; border-radius:50%; background:#1C1D23; display:grid; place-items:center; font-size:12px}
     .who{flex:1; min-width:0}
-    .who b{display:block; font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-    .who span{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut)}
-    .link-btn{border:1px solid var(--line); background:transparent; color:var(--txt); border-radius:8px; font-size:12px; padding:6px 10px; cursor:pointer}
-    .link-btn:hover{background:var(--raised)}
-    /* main */
-    .main{display:flex; flex-direction:column; min-width:0; min-height:0}
-    .topbar{height:56px; flex:0 0 auto; display:flex; align-items:center; gap:10px; padding:0 20px; border-bottom:1px solid var(--line); background:rgba(10,10,11,.72); backdrop-filter:blur(12px)}
-    .icon-btn{border:0; background:transparent; color:var(--mut); width:30px; height:30px; border-radius:8px; cursor:pointer; display:grid; place-items:center}
-    .icon-btn:hover{background:var(--raised); color:var(--txt)}
-    .menu-btn{display:none}
-    .room-pill{font-family:"Inter Tight",sans-serif; font-weight:600; font-size:14px}
-    .room-pill span{color:var(--dim)}
-    .top-actions{margin-left:auto}
-    .primary-btn{border:0; background:#fff; color:#000; font-weight:600; font-size:13.5px; border-radius:11px; padding:9px 15px; cursor:pointer}
-    .primary-btn:hover{background:#E4E4E4}
+    .who b{display:block; font-size:13px}
+    .who span{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:#9A9AA3}
+    .link-btn{border:1px solid rgba(255,255,255,.08); background:transparent; color:#ECECED; border-radius:8px; font-size:12px; padding:6px 10px; cursor:pointer}
+    .main{display:flex; flex-direction:column; min-width:0}
+    .topbar{height:56px; display:flex; align-items:center; gap:10px; padding:0 20px; border-bottom:1px solid rgba(255,255,255,.08); background:rgba(10,10,11,.72)}
+    .room-pill{font-family:"Inter Tight",sans-serif; font-weight:600}
+    .primary-btn{border:0; background:#fff; color:#000; font-weight:600; border-radius:11px; padding:9px 15px; cursor:pointer}
     .scroll{flex:1; overflow:auto}
     .col{max-width:760px; margin:0 auto; padding:0 24px; width:100%}
-    .hero{padding:72px 0 8px}
-    .hero h1{margin:0 0 10px; font-family:"Inter Tight",sans-serif; font-weight:600; font-size:clamp(30px,4.4vw,42px); letter-spacing:-.045em; line-height:1.04}
-    .hero h1 em{font-style:normal; color:var(--mut); font-weight:500}
-    .hero p{margin:0 0 22px; color:var(--mut); font-size:14.5px}
     #msgs{display:flex; flex-direction:column; gap:2px; padding:26px 0 18px}
-    .sys{text-align:center; color:var(--dim); font-family:"JetBrains Mono",monospace; font-size:11px; padding:10px}
+    .sys{text-align:center; color:#6B6B74; font-family:"JetBrains Mono",monospace; font-size:11px; padding:10px}
     .row{display:flex; gap:12px; padding:11px 8px; border-radius:14px}
-    .row:hover{background:rgba(255,255,255,.02)}
-    .row .ava{width:30px; height:30px; border-radius:50%; flex:0 0 auto; display:grid; place-items:center; font-size:12px; font-weight:600; background:var(--raised-2); border:1px solid var(--line)}
     .row.me{flex-direction:row-reverse}
+    .row .ava{width:30px; height:30px; border-radius:50%; flex:0 0 auto; display:grid; place-items:center; font-weight:600; background:#26272E; border:1px solid rgba(255,255,255,.08)}
     .row.me .ava{display:none}
     .bubble{max-width:min(78%,560px)}
-    .row.me .bubble{background:var(--raised-2); border:1px solid var(--line); border-radius:18px 18px 5px 18px; padding:10px 14px; margin-left:auto}
-    .meta{display:flex; gap:8px; align-items:baseline; margin-bottom:2px}
+    .row.me .bubble{background:#26272E; border:1px solid rgba(255,255,255,.08); border-radius:18px 18px 5px 18px; padding:10px 14px; margin-left:auto}
+    .meta{display:flex; gap:8px; align-items:baseline}
     .meta b{font-size:13px}
-    .meta time{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--dim)}
+    .meta time{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:#6B6B74}
     .body{font-size:14.5px; line-height:1.6; white-space:pre-wrap; word-break:break-word}
-    .presence{display:none; width:fit-content; margin:0 auto 6px; font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--mut); border:1px solid var(--line); background:var(--soot); border-radius:99px; padding:5px 12px}
-    .composer-zone{flex:0 0 auto; padding:6px 0 10px; background:linear-gradient(180deg, transparent, var(--void) 30%)}
-    .composer{border:1px solid var(--line-2); background:var(--card); border-radius:26px; box-shadow:0 12px 40px rgba(0,0,0,.5)}
-    .composer:focus-within{border-color:rgba(122,162,255,.45)}
-    #msgInput{width:100%; background:transparent; border:0; outline:0; resize:none; color:var(--txt); font:inherit; font-size:14.5px; padding:15px 18px 14px; max-height:160px; display:block}
-    #msgInput::placeholder{color:var(--dim)}
+    .presence{display:none; width:fit-content; margin:0 auto 6px; font-family:"JetBrains Mono",monospace; font-size:11px; color:#9A9AA3; border:1px solid rgba(255,255,255,.08); background:#101014; border-radius:99px; padding:5px 12px}
+    .composer{border:1px solid rgba(255,255,255,.13); background:#131318; border-radius:26px; padding:0}
+    #msgInput{width:100%; background:transparent; border:0; outline:0; color:#ECECED; font:inherit; font-size:14.5px; padding:15px 18px; display:block}
     .composer-bar{display:flex; align-items:center; padding:0 10px 10px 18px}
-    .hint{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--dim)}
-    .spacer{flex:1}
     .send{border:0; width:34px; height:34px; border-radius:50%; background:#fff; color:#000; display:grid; place-items:center; cursor:pointer}
-    .send:disabled{background:var(--raised-2); color:var(--dim); cursor:not-allowed}
-    .foot{text-align:center; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--dim); padding:8px 0 14px}
-    #debug{display:none; margin:0 0 12px; background:#000; border:1px solid var(--line); border-radius:12px; padding:12px; font-family:"JetBrains Mono",monospace; font-size:11px; color:#B9B9C2; max-height:120px; overflow:auto; white-space:pre-wrap}
-    /* modal — ticket only */
-    .backdrop{position:fixed; inset:0; z-index:50; display:none; background:rgba(4,4,6,.62); backdrop-filter:blur(14px); align-items:center; justify-content:center; padding:20px}
-    .backdrop.open{display:flex}
-    .sheet{width:min(420px,100%); background:var(--card); border:1px solid var(--line-2); border-radius:20px; box-shadow:0 32px 90px rgba(0,0,0,.6); overflow:hidden}
-    .sheet-head{padding:18px 20px 0; display:flex; gap:12px; align-items:flex-start}
-    .sheet-head h2{margin:0; font-family:"Inter Tight",sans-serif; font-size:17px; font-weight:600; letter-spacing:-.02em}
-    .sheet-head p{margin:5px 0 0; font-size:13px; color:var(--mut)}
-    .qr-stage{margin:16px 20px 0; background:#fff; border-radius:16px; padding:16px; display:grid; place-items:center; min-height:248px}
-    #qr{display:grid; place-items:center; min-height:216px}
-    #qr canvas, #qr svg, #qr img{border-radius:8px; display:block}
-    #qr svg{width:216px; height:216px}
-    #qr .empty{color:#6B6B74; font-family:"JetBrains Mono",monospace; font-size:11.5px; text-align:center}
-    #qr .qr-fallback{color:#111; background:#fff; font-family:"JetBrains Mono",monospace; font-size:11px; word-break:break-all; text-align:center; padding:12px}
-    .verify{display:flex; align-items:center; gap:12px; margin:14px 20px 0; border:1px solid var(--line); border-radius:14px; padding:11px 14px; background:var(--void)}
-    .ring{position:relative; width:36px; height:36px; flex:0 0 auto}
-    .ring svg{transform:rotate(-90deg)}
-    .ring b{position:absolute; inset:0; display:grid; place-items:center; font-family:"JetBrains Mono",monospace; font-size:10px}
-    .verify .tt{flex:1; min-width:0}
-    .verify .tt b{display:block; font-size:13px}
-    .verify .tt span{font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--mut)}
-    #status{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut); border:1px solid var(--line); border-radius:99px; padding:4px 10px; white-space:nowrap}
-    #linkWrap{display:none; margin:12px 20px 0; border:1px dashed var(--line-2); border-radius:12px; padding:10px 12px}
-    #link{font-family:"JetBrains Mono",monospace; font-size:11px; word-break:break-all}
-    .sheet-actions{display:flex; gap:8px; padding:16px 20px 20px}
-    .btn-primary{flex:1; border:0; background:#fff; color:#000; font-weight:600; font-size:14px; border-radius:12px; padding:12px; cursor:pointer}
-    .btn-quiet{background:transparent; color:var(--txt); border:1px solid var(--line-2); border-radius:12px; padding:12px 14px; font-size:13.5px; cursor:pointer}
-    .toast-stack{position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:60; display:flex; flex-direction:column; gap:8px; align-items:center}
-    .toast{background:var(--raised-2); border:1px solid var(--line-2); border-radius:12px; padding:10px 14px; font-size:13px}
-     @media (max-width:920px){
-      .app{grid-template-columns:1fr}
-      .side{display:none}
-      .menu-btn{display:none !important}
-      .hero{padding-top:32px}
-    }
-    @media (prefers-reduced-motion: reduce){*{animation:none !important; transition:none !important}}
+    .send:disabled{opacity:.4}
+    .toast-stack{position:fixed; bottom:22px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; gap:8px}
+    .toast{background:#26272E; border:1px solid rgba(255,255,255,.13); border-radius:12px; padding:10px 14px; font-size:13px}
   </style>
 </head>
 <body>
-  <div class="app">
-    <aside class="side" id="sidebar" aria-label="Session">
-      <div class="side-top">
-        <div class="logo"><div class="mark">✕</div><b>Secure Chat</b></div>
-      </div>
-      <div class="side-foot">
-        <div class="user-card">
-          <div class="avatar" id="avatar">?</div>
-          <div class="who"><b id="me">Not linked</b><span id="meSub">enter nickname</span></div>
-          <button class="link-btn" id="linkDeviceBtn">Invite</button>
-        </div>
-      </div>
-    </aside>
-
-    <main class="main">
-      <header class="topbar">
-        <button class="icon-btn menu-btn" id="menuBtn" aria-label="Open sidebar">☰</button>
-        <div class="room-pill">Private · 2-person · E2E</div>
-        <div class="top-actions"><button class="primary-btn" id="openQrBtn">Invite</button></div>
-      </header>
-
-      <div class="scroll" id="scroll">
-        <div class="col">
-          <section class="hero" id="hero">
-            <h1>Your private link<em> — 2-person</em></h1>
-            <p>Scan the QR to chat. No nickname, no account — just share the QR. It expires in 90 seconds and burns after one scan.</p>
-            <button class="primary-btn" id="heroLinkBtn" style="margin-top:18px; padding:12px 18px">Show QR</button>
-            <p class="mono" style="margin-top:10px; font-size:11px; color:var(--dim)">Ephemeral · no email/phone · IP not logged · E2E · refresh erases</p>
-          </section>
-          <div class="presence" id="presence"></div>
-          <div id="msgs" role="log" aria-live="polite" aria-relevant="additions"></div>
-        </div>
-      </div>
-
-      <div class="composer-zone">
-        <div class="col">
-          <pre id="debug" aria-label="Debug log"></pre>
-          <div class="composer">
-            <textarea id="msgInput" rows="1" placeholder="Message" maxlength="2000" autocomplete="off"></textarea>
-            <div class="composer-bar">
-              <span class="hint">Enter to send</span>
-              <span class="spacer"></span>
-              <button class="send" id="send" aria-label="Send message" disabled>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </button>
-            </div>
-          </div>
-          <div class="foot">Secure · WSS · burns on claim</div>
-        </div>
-      </div>
-    </main>
-  </div>
-
-  <div class="backdrop" id="qrModal" role="dialog" aria-modal="true" aria-labelledby="qrTitle">
-    <div class="sheet">
-      <div class="sheet-head">
-        <div style="flex:1"><h2 id="qrTitle">Link this device</h2><p>Scan with your phone to approve.</p></div>
-        <button class="icon-btn" id="qrClose" aria-label="Close">⨯</button>
-      </div>
-      <div class="qr-stage"><div id="qr"><div class="empty">Press Generate — lives 90s.</div></div></div>
-      <div class="verify">
-        <div class="ring" aria-hidden="true">
-          <svg width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.5" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="3"/><circle id="ringFg" cx="18" cy="18" r="15.5" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-dasharray="97.4" stroke-dashoffset="0"/></svg>
-          <b id="ringNum">–</b>
-        </div>
-        <div class="tt"><b>Waiting for approval</b><span class="mono" id="timerText">No active ticket</span></div>
-        <span id="status">Idle</span>
-      </div>
-      <div id="linkWrap"><code id="link"></code></div>
-      <div class="sheet-actions">
-        <button class="btn-quiet" id="copyLinkBtn">Copy</button>
-        <button class="btn-primary" id="gen">Generate link</button>
-      </div>
+  <!-- QR only -->
+  <div id="qrView" class="qr-view">
+    <div class="qr-card">
+      <div id="qr"><div class="empty">Generating…</div></div>
+      <h1>Scan QR from other device</h1>
+      <div id="status" class="hide"></div><div id="timerText" class="hide"></div><div id="linkWrap" class="hide"><code id="link"></code></div><div id="ringNum" class="hide"></div><div id="ringFg" class="hide"></div>
     </div>
   </div>
 
-  <div class="toast-stack" id="toasts" aria-live="polite"></div>
+  <!-- Chat — hidden until scanned + connected (2-person) -->
+  <div id="chatView" class="app hide">
+    <aside class="side">
+      <div class="side-top"><div class="logo"><div class="mark">✕</div><b>Secure Chat</b></div></div>
+      <div class="side-foot"><div class="user-card"><div class="avatar" id="avatar">?</div><div class="who"><b id="me">—</b><span id="meSub">ephemeral</span></div><button class="link-btn" id="linkDeviceBtn">Invite</button></div></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div class="room-pill">Private · 2-person · E2E</div><div style="margin-left:auto"><button class="primary-btn" id="openQrBtn">Invite</button></div></header>
+      <div class="scroll" id="scroll"><div class="col"><div id="presence"></div><div id="msgs" role="log" aria-live="polite"></div></div></div>
+      <div style="padding:6px 0 10px; background:linear-gradient(180deg, transparent, #0A0A0B 30%)"><div class="col"><div class="composer"><textarea id="msgInput" rows="1" placeholder="Message" maxlength="2000"></textarea><div class="composer-bar"><span style="flex:1"></span><button class="send" id="send" aria-label="Send" disabled>↑</button></div></div></div></div>
+    </main>
+  </div>
+
+  <div id="qrModal" class="hide"></div><div id="hero" class="hide"></div><div id="debug" class="hide"></div><div id="toasts" class="toast-stack"></div>
+  <div class="hide"><span id="roomName"></span><span id="gen"></span><span id="copyLinkBtn"></span><span id="heroLinkBtn"></span><span id="qrClose"></span><span id="menuBtn"></span><span id="newChatBtn"></span></div>
   <script src="/config.js"></script>
-  <script src="/client/qrcode.min.js"></script>
   <script type="module" src="/client/desktop.js"></script>
 </body>
 </html>
