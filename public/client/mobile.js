@@ -22,9 +22,10 @@ function showConfirm(open) {
 showConfirm(false);
 
 function secureSuffixM(len){
-  const a=new Uint8Array(len);
-  crypto.getRandomValues(a);
-  return Array.from(a, b=>b.toString(36).padStart(2,'0')).join('').slice(0,len);
+  const bytes=new Uint8Array(Math.ceil(len*3/4));
+  crypto.getRandomValues(bytes);
+  let s=btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  return s.slice(0,len);
 }
 function getTokenFromUrl(){
   // Prefer fragment #token= (not sent to server) for privacy, fallback to ?token= for backwards compat

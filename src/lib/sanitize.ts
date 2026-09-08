@@ -47,6 +47,29 @@ export function validateRoomId(roomId: unknown): { ok: boolean; value?: string; 
   return { ok: true, value: v };
 }
 
+export function validateUserId(userId: unknown): { ok: boolean; value?: string; error?: string } {
+  if (typeof userId !== "string") return { ok: false, error: "userId must be string" };
+  const v = userId.trim();
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(v)) return { ok: false, error: "Invalid userId" };
+  return { ok: true, value: v };
+}
+
+export function validateDisplayName(input: unknown): { ok: boolean; value?: string; error?: string } {
+  if (input === undefined || input === null) return { ok: true, value: undefined };
+  if (typeof input !== "string") return { ok: false, error: "displayName must be string" };
+  let s = input.normalize("NFC").trim();
+  if (s.length === 0) return { ok: true, value: undefined };
+  if (s.length > 24) return { ok: false, error: "displayName too long (max 24)" };
+  if (s.length < 2) return { ok: false, error: "displayName too short (min 2)" };
+  // Reject HTML / control chars — defense-in-depth even though client uses textContent
+  if (/[<>]/.test(s)) return { ok: false, error: "displayName cannot contain < or >" };
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(s)) return { ok: false, error: "displayName contains invalid chars" };
+  // Escape for storage/display
+  s = escapeHtml(s);
+  return { ok: true, value: s };
+}
+
 export function validateTokenFormat(token: unknown): { ok: boolean; value?: string; error?: string } {
   if (typeof token !== "string") return { ok: false, error: "token must be string" };
   const v = token.trim();

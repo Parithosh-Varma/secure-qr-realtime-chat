@@ -25,7 +25,7 @@
 import { verifyJwt, signJwt, extractBearer } from "./lib/jwt";
 import { randomOpaqueToken, sha256Hex } from "./lib/crypto";
 import { json, withSecurityHeaders, requireHttps } from "./lib/headers";
-import { validateTokenFormat } from "./lib/sanitize";
+import { validateTokenFormat, validateUserId, validateDisplayName } from "./lib/sanitize";
 import { log, redactIp, hashForLog } from "./lib/logger";
 import { QR_TTL_MS, JWT_TTL_MS, MAX_PAYLOAD_BYTES } from "./lib/constants";
 
@@ -43,18 +43,30 @@ export interface Env {
   QR_TTL_SECONDS?: string;
   JWT_TTL_SECONDS?: string;
   ENVIRONMENT?: string;
+  ENABLE_DEV_LOGIN?: string;
   MODERATION_KEY?: string;
+  TURNSTILE_SECRET?: string;
   // DB?: D1Database; // uncomment when D1 is provisioned
 }
 
 function getIp(req: Request): string {
-  return req.headers.get("CF-Connecting-IP") || req.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
+  // Prefer Cloudflare-verified IP; never trust X-Forwarded-For unless you control the proxy
+  return req.headers.get("CF-Connecting-IP") || "unknown";
+}
+
+function requireJwtSecret(env: Env): string {
+  const s = env.JWT_SECRET;
+  if (!s || s === "dev-secret-change-me" || s.length < 32) {
+    throw new Error("JWT_SECRET not configured — set via wrangler secret put JWT_SECRET (min 32 chars)");
+  }
+  return s;
 }
 
 function getFingerprint(req: Request) {
+  // Privacy: do not persist raw IP; store only hashed/partial for confirmation screen
   const ip = getIp(req);
   return {
-    ip,
+    ip: hashForLog(ip), // hashed for rate-limit correlation, not raw
     userAgent: req.headers.get("User-Agent") || "unknown",
     acceptLanguage: req.headers.get("Accept-Language") || undefined,
     city: (req.cf as { city?: string })?.city,
@@ -84,7 +96,10 @@ async function rateLimit(env: Env, key: string, limit: number, windowMs: number)
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ key, limit, windowMs }),
   });
-  if (!res.ok) return { allowed: true, resetMs: windowMs };
+  if (!res.ok) {
+    // Fail closed for brute-force sensitive paths — return denied to prevent bypass when DO is down
+    return { allowed: false, resetMs: windowMs };
+  }
   const j = (await res.json()) as { allowed: boolean; resetMs: number };
   return j;
 }
@@ -107,14 +122,18 @@ export default {
       headers.set("Access-Control-Max-Age", "600");
       const origin = req.headers.get("Origin");
       const allowed = (env.ALLOWED_ORIGIN || "").split(",").map((s) => s.trim()).filter(Boolean);
-      const isAllowed =
-        origin &&
-        (allowed.includes(origin) ||
-          allowed.includes("*") ||
-          allowed.some((a) => a.includes("*") && (() => { try { const o = new URL(origin); const base = a.split("*.")[1]; return o.hostname === base || o.hostname.endsWith("." + base); } catch { return false; } })()));
-      if (isAllowed && origin) {
-        headers.set("Access-Control-Allow-Origin", origin);
-        headers.set("Access-Control-Allow-Credentials", "true");
+      const hasWildcard = allowed.includes("*");
+      if (hasWildcard && origin) {
+        // Fail closed for credentialed wildcard — never echo * with credentials
+      } else {
+        const isAllowed =
+          origin &&
+          (allowed.includes(origin) ||
+            allowed.some((a) => a.includes("*") && (() => { try { const o = new URL(origin); const base = a.split("*.")[1]; return o.hostname === base || o.hostname.endsWith("." + base); } catch { return false; } })()));
+        if (isAllowed && origin) {
+          headers.set("Access-Control-Allow-Origin", origin);
+          headers.set("Access-Control-Allow-Credentials", "true");
+        }
       }
       headers.set("Vary", "Origin");
       for (const [k, v] of Object.entries(await import("./lib/headers").then((m) => m.securityHeaders()))) headers.set(k, v);
@@ -164,15 +183,21 @@ export default {
         const ttlMs = env.QR_TTL_SECONDS ? Math.min(120_000, Math.max(60_000, parseInt(env.QR_TTL_SECONDS, 10) * 1000)) : QR_TTL_MS;
         const fingerprint = getFingerprint(req);
         // Optional host identity (for invite-to-chat: desktop already linked)
+        // If Authorization is supplied but invalid, reject rather than silently ignore (prevents alg confusion)
         let host: { userId: string; displayName?: string; email?: string } | undefined;
         const bearerHost = extractBearer(req);
         if (bearerHost) {
-          const claimsHost = await verifyJwt(bearerHost, env.JWT_SECRET || "dev-secret-change-me");
-          if (claimsHost) host = { userId: claimsHost.userId, displayName: claimsHost.displayName, email: claimsHost.email };
+          let jwtSecret: string;
+          try { jwtSecret = requireJwtSecret(env); } catch (e) { return json({ error: (e as Error).message }, { status: 500 }, req, env); }
+          const claimsHost = await verifyJwt(bearerHost, jwtSecret);
+          if (!claimsHost) {
+            return json({ error: "Invalid host session" }, { status: 401 }, req, env);
+          }
+          host = { userId: claimsHost.userId, displayName: claimsHost.displayName, email: claimsHost.email };
         }
 
-        // Private 2-person room derived from tokenHash (only these 2 can chat)
-        const roomId = `dm_${tokenHash.slice(0, 12)}`;
+        // Private 2-person room derived from tokenHash (128-bit entropy)
+        const roomId = `dm_${tokenHash.slice(0, 32)}`;
         // Store in DO keyed by tokenHash (idFromName) — prevents enumeration
         const id = env.AUTH_SESSION.idFromName(tokenHash);
         const stub = env.AUTH_SESSION.get(id);
@@ -182,15 +207,15 @@ export default {
           body: JSON.stringify({ tokenHash, fingerprint, ttlMs, host, roomId }),
         });
         if (!doRes.ok) {
-          const err = await doRes.text();
           log("error", "qr.create_failed", { status: doRes.status, ip: redactIp(ip) });
-          return json({ error: "Failed to create session", detail: err }, { status: 500 }, req, env);
+          return json({ error: "Failed to create session" }, { status: 500 }, req, env);
         }
         const doData = (await doRes.json()) as { expiresAt: number };
 
-        // Encode token into URL for QR — token is the only secret; URL is e.g. https://host/auth/link?token=...
+        // Encode token into URL for QR — use fragment (#token=) so token never hits server logs/Referer.
+        // Keep ?token= query fallback for old clients, but prefer fragment.
         const origin = url.origin; // https://yourdomain.com
-        const linkUrl = `${origin}/mobile?token=${encodeURIComponent(token)}`;
+        const linkUrl = `${origin}/mobile#token=${encodeURIComponent(token)}`;
         // Also return raw token for desktop JS to poll via Authorization-less flow (poll by token)
         // Note: token is single-use; desktop must not log it.
         log("info", "qr.created", { tokenHash: hashForLog(tokenHash), ip: redactIp(ip), expiresAt: doData.expiresAt, roomId });
@@ -198,7 +223,7 @@ export default {
         return json(
           {
             token, // desktop holds in memory only, never persisted to disk in demo
-            tokenHash: tokenHash.slice(0, 12) + "...", // debug hint, not usable
+            tokenHash: tokenHash.slice(0, 6) + "...", // truncated hint only
             url: linkUrl,
             roomId, // private 1:1 room — only host + visitor
             expiresAt: doData.expiresAt,
@@ -215,6 +240,12 @@ export default {
         const token = url.searchParams.get("token") || "";
         const v = validateTokenFormat(token);
         if (!v.ok) return json({ error: v.error }, { status: 400 }, req, env);
+        // Rate-limit status polling per IP and per token to prevent enumeration/DoS
+        const ip = getIp(req);
+        const rlIp = await rateLimit(env, `qrstatus:ip:${ip}`, 60, 60_000);
+        if (!rlIp.allowed) return json({ error: "Rate limited" }, { status: 429 }, req, env);
+        const rlTok = await rateLimit(env, `qrstatus:tok:${await sha256Hex(v.value!)}`, 30, 60_000);
+        if (!rlTok.allowed) return json({ error: "Rate limited" }, { status: 429 }, req, env);
         const tokenHash = await sha256Hex(v.value!);
         const id = env.AUTH_SESSION.idFromName(tokenHash);
         const stub = env.AUTH_SESSION.get(id);
@@ -228,10 +259,13 @@ export default {
         const token = url.searchParams.get("token") || "";
         const v = validateTokenFormat(token);
         if (!v.ok) return json({ error: v.error }, { status: 400 }, req, env);
+        const ip = getIp(req);
+        const rlIp = await rateLimit(env, `qrws:ip:${ip}`, 20, 60_000);
+        if (!rlIp.allowed) return json({ error: "Rate limited" }, { status: 429 }, req, env);
         const tokenHash = await sha256Hex(v.value!);
         const id = env.AUTH_SESSION.idFromName(tokenHash);
         const stub = env.AUTH_SESSION.get(id);
-        // Forward WS upgrade to DO
+        // Forward WS upgrade to DO with Origin validation in DO
         return stub.fetch(`https://auth/ws?tokenHash=${encodeURIComponent(tokenHash)}`, req);
       }
 
@@ -248,9 +282,9 @@ export default {
         // Verify mobile session JWT
         const bearer = extractBearer(req);
         if (!bearer) return json({ error: "Missing Authorization" }, { status: 401 }, req, env);
-        const secret = env.JWT_SECRET || "dev-secret-change-me";
-        if (secret === "dev-secret-change-me") log("warn", "jwt.using_dev_secret", {});
-        const claims = await verifyJwt(bearer, secret);
+        let jwtSecret: string;
+        try { jwtSecret = requireJwtSecret(env); } catch (e) { return json({ error: (e as Error).message }, { status: 500 }, req, env); }
+        const claims = await verifyJwt(bearer, jwtSecret);
         if (!claims) return json({ error: "Invalid or expired mobile session" }, { status: 401 }, req, env);
 
         // Rate limit approvals per IP and per user
@@ -284,6 +318,11 @@ export default {
         const token = url.searchParams.get("token") || "";
         const v = validateTokenFormat(token);
         if (!v.ok) return json({ error: v.error }, { status: 400 }, req, env);
+        const ip = getIp(req);
+        const rlIp = await rateLimit(env, `qrpreview:ip:${ip}`, 60, 60_000);
+        if (!rlIp.allowed) return json({ error: "Rate limited" }, { status: 429 }, req, env);
+        const rlTok = await rateLimit(env, `qrpreview:tok:${await sha256Hex(v.value!)}`, 30, 60_000);
+        if (!rlTok.allowed) return json({ error: "Rate limited" }, { status: 429 }, req, env);
         const tokenHash = await sha256Hex(v.value!);
         const id = env.AUTH_SESSION.idFromName(tokenHash);
         const stub = env.AUTH_SESSION.get(id);
@@ -321,9 +360,10 @@ export default {
           return json(data, { status: doRes.status }, req, env);
         }
         // Mint short-lived JWT for desktop
-        const secret = env.JWT_SECRET || "dev-secret-change-me";
+        let jwtSecret: string;
+        try { jwtSecret = requireJwtSecret(env); } catch (e) { return json({ error: (e as Error).message }, { status: 500 }, req, env); }
         const ttlMs = env.JWT_TTL_SECONDS ? parseInt(env.JWT_TTL_SECONDS, 10) * 1000 : JWT_TTL_MS;
-        const jwt = await signJwt(data.identity!, secret, ttlMs);
+        const jwt = await signJwt(data.identity!, jwtSecret, ttlMs);
 
         log("info", "qr.claim_issued_jwt", { tokenHash: hashForLog(tokenHash), userId: data.identity!.userId, ip: redactIp(ip), roomId: data.roomId });
 
@@ -334,17 +374,33 @@ export default {
       // ---- Demo login (mobile already-authenticated session) ----
       // In real app, mobile auth is via your IdP. Here we provide a dev endpoint to mint a mobile JWT for testing.
       if (path === "/api/auth/dev-login" && method === "POST") {
-        // Only allow in dev / when ENVIRONMENT !== production or when header X-Dev-Allow is set with secret
-        // For demo we allow it but rate-limit heavily
+        // Production gate: disable unless explicitly enabled
+        const allowDev = env.ENVIRONMENT !== "production" || env.ENABLE_DEV_LOGIN === "true";
+        if (!allowDev) return json({ error: "Not found" }, { status: 404 }, req, env);
         const ip = getIp(req);
         const rl = await rateLimit(env, `devlogin:ip:${ip}`, 10, 60_000);
         if (!rl.allowed) return json({ error: "Rate limited" }, { status: 429 }, req, env);
         const body = (await readJsonSafe(req)) as { userId?: string; displayName?: string; email?: string } | null;
-        const userId = body?.userId?.trim() || `user_${crypto.randomUUID().slice(0, 8)}`;
-        if (!/^[a-zA-Z0-9_-]{1,64}$/.test(userId)) return json({ error: "Invalid userId" }, { status: 400 }, req, env);
-        const displayName = (body?.displayName || userId).slice(0, 64);
-        const secret = env.JWT_SECRET || "dev-secret-change-me";
-        const jwt = await signJwt({ userId, displayName, email: body?.email }, secret, JWT_TTL_MS);
+        // Hardened: server generates userId — never trust client-supplied userId for impersonation
+        // Client may suggest displayName, but userId is always server-generated to prevent enumeration
+        let userId = `user_${crypto.randomUUID().slice(0, 8)}`;
+        if (body?.userId) {
+          const v = validateUserId(body.userId);
+          if (!v.ok) return json({ error: v.error }, { status: 400 }, req, env);
+          // Ignore supplied userId for security; keep server-generated
+        }
+        const dnRes = validateDisplayName(body?.displayName || userId);
+        if (!dnRes.ok) return json({ error: dnRes.error }, { status: 400 }, req, env);
+        const displayName = dnRes.value || userId;
+        let jwtSecret2: string;
+        try { jwtSecret2 = requireJwtSecret(env); } catch (e) { return json({ error: (e as Error).message }, { status: 500 }, req, env); }
+        // Validate email if provided
+        if (body?.email !== undefined) {
+          if (typeof body.email !== "string" || body.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
+            return json({ error: "Invalid email" }, { status: 400 }, req, env);
+          }
+        }
+        const jwt = await signJwt({ userId, displayName, email: body?.email }, jwtSecret2, JWT_TTL_MS);
         log("info", "dev.login", { userId, ip: redactIp(ip) });
         return json({ token: jwt, userId, displayName }, {}, req, env);
       }
@@ -387,11 +443,13 @@ export default {
       const histMatch = path.match(/^\/api\/room\/([^/]+)\/history\/?$/);
       if (histMatch && method === "GET") {
         const rid = histMatch[1];
+        const bearer = extractBearer(req);
+        if (!bearer) return json({ error: "Missing Authorization" }, { status: 401 }, req, env);
         const id = env.CHAT_ROOM.idFromName(rid);
         const stub = env.CHAT_ROOM.get(id);
-        const token = extractBearer(req) || url.searchParams.get("token") || "";
-        return stub.fetch(`https://room/history?roomId=${encodeURIComponent(rid)}&token=${encodeURIComponent(token)}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        // SECURITY: REST history requires Authorization header only, no query token to avoid log leakage
+        return stub.fetch(`https://room/history?roomId=${encodeURIComponent(rid)}`, {
+          headers: { Authorization: `Bearer ${bearer}` },
         });
       }
 

@@ -18,8 +18,9 @@ export async function checkRateLimit(
     body: JSON.stringify({ key, ...opts }),
   });
   if (!res.ok) {
-    // Fail open with logging — but still enforce a local fallback deny if DO is down repeatedly
-    return { allowed: true, remaining: opts.limit, resetMs: opts.windowMs };
+    // Fail closed for security-sensitive paths if DO is down — deny with 503 to prevent brute-force bypass
+    // For availability we could fail open, but audit flagged fail-open as brute-force bypass. Use closed.
+    return { allowed: false, remaining: 0, resetMs: opts.windowMs };
   }
   return (await res.json()) as { allowed: boolean; remaining: number; resetMs: number };
 }

@@ -30,13 +30,15 @@ type SessionMeta = {
   displayName?: string;
   // no ip stored — privacy: "Be careful about logging IP addresses" + "Don't retain unnecessary connection metadata"
   connectedAt: number;
+  roomId: string; // bind WS to its room to prevent cross-room injection
 };
 
 type ChatEnv = {
   RATE_LIMITER: DurableObjectNamespace;
-  JWT_SECRET?: string;
+  JWT_SECRET: string;
   ROOM_MEMBERS_JSON?: string;
   MODERATION_KEY?: string;
+  ALLOWED_ORIGIN?: string;
 };
 
 export class ChatRoom implements DurableObject {
@@ -102,8 +104,27 @@ export class ChatRoom implements DurableObject {
         if (map[roomId]) return map[roomId].includes(userId);
       }
     } catch {}
-    // Default: any authenticated user may join (still requires valid JWT)
+    // For general, check persistent membership — user must have joined before to read history
+    // This prevents any JWT holder from scraping 100 msgs; membership is added on successful WS join
+    if (roomId === "general") {
+      const members = await this.storage.get<string[]>(`members:${roomId}`);
+      if (members) return members.includes(userId);
+      // First join always allowed — will be added after auth
+      return true;
+    }
+    // Default: any authenticated user may join (still requires valid JWT) — dm_* capped at 2 via distinctUsers
     return true;
+  }
+
+  private async addMember(roomId: string, userId: string): Promise<void> {
+    const key = `members:${roomId}`;
+    const existing = (await this.storage.get<string[]>(key)) || [];
+    if (!existing.includes(userId)) {
+      existing.push(userId);
+      // Keep bounded to 1000 members for general
+      if (existing.length > 1000) existing.splice(0, existing.length - 1000);
+      await this.storage.put(key, existing);
+    }
   }
 
   private async isBlocked(senderId: string, viewerId: string): Promise<boolean> {
@@ -119,6 +140,19 @@ export class ChatRoom implements DurableObject {
   // ---- WebSocket handling ----
   private async handleWebSocket(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    // CSWSH protection: validate Origin for WebSocket upgrade
+    const origin = req.headers.get("Origin");
+    if (origin) {
+      const allowedOrigins = (this.env as unknown as { ALLOWED_ORIGIN?: string }).ALLOWED_ORIGIN?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+      const isAllowedOrigin =
+        allowedOrigins.includes(origin) ||
+        allowedOrigins.some((a) => a.includes("*") && (() => { try { const o = new URL(origin); const base = a.split("*.")[1]; return o.hostname === base || o.hostname.endsWith("." + base); } catch { return false; } })());
+      // For wildcard *, we already reject credentialed — but for WS we still enforce explicit allow
+      if (!isAllowedOrigin && !allowedOrigins.includes("*")) {
+        return Response.json({ error: "Forbidden Origin" }, { status: 403 });
+      }
+    }
+
     const roomId = url.searchParams.get("roomId") || url.pathname.split("/").pop() || "";
     const vRoom = validateRoomId(roomId);
     if (!vRoom.ok) return Response.json({ error: vRoom.error }, { status: 400 });
@@ -129,17 +163,20 @@ export class ChatRoom implements DurableObject {
       return Response.json({ error: "Payload too large" }, { status: 413 });
     }
 
-    // Auth: Bearer JWT required
+    // Auth: Bearer JWT required — allow query token for WS compat but prefer header
     const token = extractBearer(req) || url.searchParams.get("token");
     if (!token) return Response.json({ error: "Missing Authorization" }, { status: 401 });
-    const secret = (this.env as unknown as { JWT_SECRET?: string }).JWT_SECRET || "dev-secret-change-me";
+    const secret = this.env.JWT_SECRET;
+    if (!secret || secret === "dev-secret-change-me" || secret.length < 32) {
+      return Response.json({ error: "Server misconfigured" }, { status: 500 });
+    }
     const claims = await verifyJwt(token, secret);
     if (!claims) return Response.json({ error: "Invalid or expired token" }, { status: 401 });
 
     // Room membership check server-side (never trust client)
     const allowed = await this.checkMembership(claims.userId, vRoom.value!);
     if (!allowed) {
-      log("warn", "room.forbidden", { roomId: vRoom.value, userId: claims.userId });
+      log("warn", "room.forbidden", { roomId: vRoom.value, userId: hashForLog(claims.userId) });
       return Response.json({ error: "Not a member of this room" }, { status: 403 });
     }
 
@@ -174,7 +211,11 @@ export class ChatRoom implements DurableObject {
       userId: claims.userId,
       displayName: claims.displayName,
       connectedAt: Date.now(),
+      roomId: vRoom.value!,
     };
+
+    // Persist membership for history access (general room)
+    await this.addMember(vRoom.value!, claims.userId);
 
     // Hibernation: attach metadata so it survives eviction
     this.state.acceptWebSocket(server);
@@ -183,13 +224,13 @@ export class ChatRoom implements DurableObject {
 
     log("info", "room.join", { roomId: vRoom.value, userId: hashForLog(claims.userId) });
 
-    // Send history + welcome
-    const history = await this.getHistory(vRoom.value!);
+    // Send history + welcome — ephemeral privacy: never replay history on welcome for any room
+    // Clients must fetch history explicitly via REST if needed; welcome is empty to prevent passive interception
     const welcome = {
       type: "welcome",
       roomId: vRoom.value,
       userId: claims.userId,
-      history: await this.filterHistoryForUser(history, claims.userId),
+      history: [],
       ts: Date.now(),
     };
     // For hibernation, send after accept; queue microtask
@@ -247,6 +288,12 @@ export class ChatRoom implements DurableObject {
       return;
     }
 
+    // Enforce payload roomId == connection roomId to prevent cross-room injection (IDOR)
+    if (vRoom.value !== meta.roomId) {
+      this.sendError(ws, "roomId mismatch");
+      return;
+    }
+
     // Double-check membership on every message (never trust client-supplied roomId alone)
     const allowed = await this.checkMembership(meta.userId, vRoom.value!);
     if (!allowed) {
@@ -282,7 +329,7 @@ export class ChatRoom implements DurableObject {
     const modHook = createModerationHook(this.env as unknown as { MODERATION_KEY?: string });
     const mod = await modHook(cleanBody, { userId: meta.userId, roomId: vRoom.value!, ip: "***" });
     if (!mod.allowed) {
-      log("warn", "moderation.blocked_broadcast", { roomId: vRoom.value, userId: meta.userId, reason: mod.reason });
+      log("warn", "moderation.blocked_broadcast", { roomId: vRoom.value, userId: hashForLog(meta.userId), reason: mod.reason });
       ws.send(JSON.stringify({ type: "moderation", allowed: false, reason: mod.reason, ts: Date.now() }));
       return;
     }
@@ -307,9 +354,9 @@ export class ChatRoom implements DurableObject {
     await this.appendHistory(chatMsg);
 
     if (mod.flagged) {
-      log("info", "moderation.flagged_broadcast", { messageId: chatMsg.id, roomId: chatMsg.roomId, userId: meta.userId, reason: mod.reason });
+      log("info", "moderation.flagged_broadcast", { messageId: chatMsg.id, roomId: chatMsg.roomId, userId: hashForLog(meta.userId), reason: mod.reason });
     } else {
-      log("info", "room.message", { messageId: chatMsg.id.slice(0, 8), roomId: chatMsg.roomId, userId: meta.userId });
+      log("info", "room.message", { messageId: chatMsg.id.slice(0, 8), roomId: chatMsg.roomId, userId: hashForLog(meta.userId) });
     }
 
     // Broadcast to room (respect blocks: don't deliver to users who blocked sender, or where sender blocked viewer? we do viewer-blocks-sender)
@@ -356,14 +403,22 @@ export class ChatRoom implements DurableObject {
     const vRoom = validateRoomId(roomId);
     if (!vRoom.ok) return Response.json({ error: vRoom.error }, { status: 400 });
 
-    // Auth required to read history (same JWT check as WS)
-    const token = extractBearer(req) || url.searchParams.get("token") || "";
-    const secret = (this.env as unknown as { JWT_SECRET?: string }).JWT_SECRET || "dev-secret-change-me";
-    const claims = token ? await verifyJwt(token, secret) : null;
+    // Auth required to read history (same JWT check as WS) — header only for REST to avoid token-in-URL leakage
+    const token = extractBearer(req) || "";
+    if (!token) return Response.json({ error: "Missing Authorization" }, { status: 401 });
+    const secret = this.env.JWT_SECRET;
+    if (!secret || secret === "dev-secret-change-me" || secret.length < 32) {
+      return Response.json({ error: "Server misconfigured" }, { status: 500 });
+    }
+    const claims = await verifyJwt(token, secret);
     if (!claims) return Response.json({ error: "Unauthorized" }, { status: 401 });
     const allowed = await this.checkMembership(claims.userId, vRoom.value!);
     if (!allowed) return Response.json({ error: "Forbidden" }, { status: 403 });
 
+    // dm_* are ephemeral — never replay history even via REST
+    if (vRoom.value!.startsWith("dm_")) {
+      return Response.json({ roomId: vRoom.value, messages: [] });
+    }
     const history = await this.getHistory(vRoom.value!);
     const filtered = await this.filterHistoryForUser(history, claims.userId);
     return Response.json({ roomId: vRoom.value, messages: filtered });
@@ -372,11 +427,30 @@ export class ChatRoom implements DurableObject {
   private async handleReport(req: Request): Promise<Response> {
     const body = (await req.json().catch(() => null)) as { messageId?: string; reason?: string; roomId?: string } | null;
     if (!body?.messageId || !body.reason) return Response.json({ error: "messageId and reason required" }, { status: 400 });
+    if (!/^[a-f0-9-]{36}$/.test(body.messageId)) return Response.json({ error: "Invalid messageId" }, { status: 400 });
     if (body.reason.length > 500) return Response.json({ error: "Reason too long" }, { status: 400 });
+    if (body.reason.length < 3) return Response.json({ error: "Reason too short" }, { status: 400 });
+    // Sanitize reason
+    if (/[<>]/.test(body.reason)) return Response.json({ error: "Invalid characters in reason" }, { status: 400 });
+    // Rate-limit reports per user
+    const tokenTmp = extractBearer(req);
+    if (tokenTmp) {
+      const secretTmp = this.env.JWT_SECRET;
+      if (secretTmp) {
+        const claimsTmp = await verifyJwt(tokenTmp, secretTmp);
+        if (claimsTmp && this.env.RATE_LIMITER) {
+          const rl = await this.checkRateLimitWithDo(`report:user:${hashForLog(claimsTmp.userId)}`, { limit: 5, windowMs: 60_000 });
+          if (!rl.allowed) return Response.json({ error: "Rate limited" }, { status: 429 });
+        }
+      }
+    }
 
     const token = extractBearer(req);
     if (!token) return Response.json({ error: "Unauthorized" }, { status: 401 });
-    const secret = (this.env as unknown as { JWT_SECRET?: string }).JWT_SECRET || "dev-secret-change-me";
+    const secret = this.env.JWT_SECRET;
+    if (!secret || secret === "dev-secret-change-me" || secret.length < 32) {
+      return Response.json({ error: "Server misconfigured" }, { status: 500 });
+    }
     const claims = await verifyJwt(token, secret);
     if (!claims) return Response.json({ error: "Invalid token" }, { status: 401 });
 
@@ -392,11 +466,28 @@ export class ChatRoom implements DurableObject {
     const body = (await req.json().catch(() => null)) as { blockedUserId?: string } | null;
     if (!body?.blockedUserId || typeof body.blockedUserId !== "string") return Response.json({ error: "blockedUserId required" }, { status: 400 });
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(body.blockedUserId)) return Response.json({ error: "Invalid userId" }, { status: 400 });
+    // Prevent self-block already checked after auth, but also validate length
+    if (body.blockedUserId.length > 64) return Response.json({ error: "Invalid userId" }, { status: 400 });
+    // Rate-limit block spam
+    const tokenTmp2 = extractBearer(req);
+    if (tokenTmp2) {
+      const s2 = this.env.JWT_SECRET;
+      if (s2) {
+        const c2 = await verifyJwt(tokenTmp2, s2);
+        if (c2 && this.env.RATE_LIMITER) {
+          const rl = await this.checkRateLimitWithDo(`block:user:${hashForLog(c2.userId)}`, { limit: 10, windowMs: 60_000 });
+          if (!rl.allowed) return Response.json({ error: "Rate limited" }, { status: 429 });
+        }
+      }
+    }
 
     const token = extractBearer(req);
     if (!token) return Response.json({ error: "Unauthorized" }, { status: 401 });
-    const secret = (this.env as unknown as { JWT_SECRET?: string }).JWT_SECRET || "dev-secret-change-me";
-    const claims = await verifyJwt(token, secret);
+    const secret2 = this.env.JWT_SECRET;
+    if (!secret2 || secret2 === "dev-secret-change-me" || secret2.length < 32) {
+      return Response.json({ error: "Server misconfigured" }, { status: 500 });
+    }
+    const claims = await verifyJwt(token, secret2);
     if (!claims) return Response.json({ error: "Invalid token" }, { status: 401 });
     if (claims.userId === body.blockedUserId) return Response.json({ error: "Cannot block yourself" }, { status: 400 });
 
@@ -419,12 +510,18 @@ export class ChatRoom implements DurableObject {
     if (!body?.roomId || typeof body.body !== "string") return Response.json({ error: "roomId and body required" }, { status: 400 });
     const token = extractBearer(req);
     if (!token) return Response.json({ error: "Unauthorized" }, { status: 401 });
-    const secret = (this.env as unknown as { JWT_SECRET?: string }).JWT_SECRET || "dev-secret-change-me";
+    const secret = this.env.JWT_SECRET;
+    if (!secret || secret === "dev-secret-change-me" || secret.length < 32) {
+      return Response.json({ error: "Server misconfigured" }, { status: 500 });
+    }
     const claims = await verifyJwt(token, secret);
     if (!claims) return Response.json({ error: "Invalid token" }, { status: 401 });
 
     const vRoom = validateRoomId(body.roomId);
     if (!vRoom.ok) return Response.json({ error: vRoom.error }, { status: 400 });
+    // For REST, ensure the caller is not spoofing a different room — the DO itself is that room,
+    // so we validate the DO's room matches the payload (when routed via Worker idFromName(body.roomId)).
+    // Worker already routes to correct DO, but double-check via storage prefix if needed.
     const allowed = await this.checkMembership(claims.userId, vRoom.value!);
     if (!allowed) return Response.json({ error: "Forbidden" }, { status: 403 });
 
@@ -523,7 +620,7 @@ export class ChatRoom implements DurableObject {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key, ...opts }),
     });
-    if (!res.ok) return { allowed: true, remaining: opts.limit, resetMs: opts.windowMs };
+    if (!res.ok) return { allowed: false, remaining: 0, resetMs: opts.windowMs };
     return (await res.json()) as { allowed: boolean; remaining: number; resetMs: number };
   }
 

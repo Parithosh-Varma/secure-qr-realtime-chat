@@ -31,6 +31,16 @@ export async function verifyJwt(token: string, secret: string): Promise<SessionC
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   const [h, p, s] = parts;
+  // Strict alg check — reject none and any non-HS256 before signature verification
+  try {
+    const header = decodeJson<{ alg?: string; typ?: string }>(h);
+    if (header.alg !== "HS256") return null;
+    if (header.typ !== "JWT") return null;
+  } catch {
+    return null;
+  }
+  // Empty signature must be rejected (none alg bypass)
+  if (!s) return null;
   const expected = base64UrlEncode(await hmacSha256(secret, `${h}.${p}`));
   // constant-time compare
   if (s.length !== expected.length) return null;
@@ -42,7 +52,9 @@ export async function verifyJwt(token: string, secret: string): Promise<SessionC
     const now = Math.floor(Date.now() / 1000);
     if (claims.exp !== undefined && now > claims.exp) return null;
     if (claims.iat !== undefined && claims.iat > now + 60) return null; // clock skew
+    if (claims.exp !== undefined && claims.iat !== undefined && claims.exp <= claims.iat) return null;
     if (!claims.userId) return null;
+    if (claims.jti !== undefined && typeof claims.jti !== "string") return null;
     return claims;
   } catch {
     return null;

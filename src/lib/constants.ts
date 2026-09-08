@@ -25,12 +25,14 @@ export const ALLOWED_ORIGINS = [
 
 export const CSP_VALUE = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com", // no external QR CDN — vendored /client/qrcode.min.js (same-origin)
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com",
-  "font-src 'self' https://fonts.gstatic.com data:",
+  // Inline script hashes for mobile scanned check — covers both spaced and unspaced variants (fallback vs Pages)
+  "script-src 'self' 'sha256-fTWPLI4DgOpI9p+2v3EpL47bxpzpE58sQecp+7hgg0s=' 'sha256-M67uEYBMiVBIUccM2gXgT8fw3VfiYh71yc/4ZWx1UA0='",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
   "img-src 'self' data: blob:",
   "connect-src 'self' https: wss:",
   "frame-ancestors 'none'",
   "base-uri 'none'",
   "form-action 'self'",
+  "object-src 'none'",
 ].join("; ");

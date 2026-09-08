@@ -1,0 +1,18 @@
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-fTWPLI4DgOpI9p+2v3EpL47bxpzpE58sQecp+7hgg0s=' 'sha256-M67uEYBMiVBIUccM2gXgT8fw3VfiYh71yc/4ZWx1UA0='; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' https: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'
+  Cache-Control: no-store
+  X-Robots-Tag: noindex
+
+/client/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/*.js
+  Content-Type: application/javascript; charset=utf-8
+  Cache-Control: public, max-age=31536000, immutable
