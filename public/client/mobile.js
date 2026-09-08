@@ -21,10 +21,36 @@ function showConfirm(open) {
 }
 showConfirm(false);
 
+function secureSuffixM(len){
+  const a=new Uint8Array(len);
+  crypto.getRandomValues(a);
+  return Array.from(a, b=>b.toString(36).padStart(2,'0')).join('').slice(0,len);
+}
+function getTokenFromUrl(){
+  // Prefer fragment #token= (not sent to server) for privacy, fallback to ?token= for backwards compat
+  try{
+    const hash=location.hash.match(/token=([^&]+)/);
+    if(hash) return decodeURIComponent(hash[1]);
+    const qs=new URL(location.href).searchParams.get("token");
+    if(qs) return qs;
+  }catch{}
+  return null;
+}
 async function deriveE2EKeyM(rawToken) {
   if (!rawToken) return null;
-  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawToken));
-  return crypto.subtle.importKey("raw", h, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  try{
+    const enc=new TextEncoder();
+    const ikm=await crypto.subtle.importKey("raw", enc.encode(rawToken), {name:"HKDF"}, false, ["deriveKey"]);
+    return await crypto.subtle.deriveKey({name:"HKDF", hash:"SHA-256", salt:new Uint8Array(0), info:enc.encode("qrchat-e2e-v1")}, ikm, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
+  }catch{
+    const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawToken));
+    return crypto.subtle.importKey("raw", h, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  }
+}
+async function roomIdFromTokenM(rawToken){
+  const buf=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawToken));
+  const hex=[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,"0")).join("");
+  return `dm_${hex.slice(0,12)}`;
 }
 async function e2eEncryptM(plain, key) {
   if (!key || !privateRoomM || !privateRoomM.startsWith("dm_")) return plain;
@@ -104,14 +130,14 @@ async function joinChatM() {
 }
 
 $("#login")?.addEventListener("click", async () => {
-  const nick = ($("#userId")?.value || "").trim() || `anon-${Math.random().toString(36).slice(2,6)}`;
+  const nick = ($("#userId")?.value || "").trim() || `anon-${(crypto.randomUUID ? crypto.randomUUID().slice(0,4) : secureSuffixM(4))}`;
   if (nick.length < 2 || nick.length > 24) return alert("Nickname 2–24 chars");
-  const tmpId = `u_${Math.random().toString(36).slice(2,10)}_${Date.now().toString(36)}`;
+  const tmpId = `u_${(crypto.randomUUID ? crypto.randomUUID().replace(/-/g,'').slice(0,8) : secureSuffixM(8))}_${Date.now().toString(36)}`;
   const res = await fetch(api2("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: tmpId, displayName: nick }) });
   const data = await res.json().catch(() => ({}));
   if (data.token) {
     mobileJwt = data.token; mobileDisplay = nick;
-    privateRoomM = `dm_${Math.random().toString(36).slice(2,10)}${Date.now().toString(36).slice(-4)}`;
+    privateRoomM = `dm_${(crypto.randomUUID ? crypto.randomUUID().replace(/-/g,'').slice(0,8) : secureSuffixM(8))}${Date.now().toString(36).slice(-4)}`;
     if (loginOut) loginOut.textContent = `Ready as ${nick} · private ${privateRoomM} (2-person, refresh erases)`;
   } else if (loginOut) loginOut.textContent = "Could not mint — try again";
 });
@@ -145,7 +171,12 @@ $("#preview")?.addEventListener("click", async () => {
   const raw = ($("#token")?.value || "").trim();
   if (!raw) return;
   let t = raw;
-  try { const u = new URL(raw); const p = u.searchParams.get("token"); if (p) t = p; } catch {}
+  try {
+    // support both fragment and query token URLs
+    const hashMatch = raw.match(/[#&]token=([^&]+)/);
+    if (hashMatch) t = decodeURIComponent(hashMatch[1]);
+    else { const u = new URL(raw); const p = u.searchParams.get("token") || (u.hash.match(/token=([^&]+)/)?.[1] ? decodeURIComponent(u.hash.match(/token=([^&]+)/)[1]) : null); if (p) t = p; }
+  } catch {}
   $("#token").value = t;
   await doPreview(t);
 });
@@ -155,7 +186,7 @@ $("#approve")?.addEventListener("click", async () => {
   if (!mobileJwt) return alert("Mint a nickname first (enter above)");
   if (!token) return alert("Paste token");
   e2eKeyM = await deriveE2EKeyM(token);
-  privateRoomM = privateRoomM || `dm_${token.slice(0,12)}`; // fallback derive
+  privateRoomM = privateRoomM || await roomIdFromTokenM(token); // hash-based — matches worker dm_${tokenHash.slice(0,12)}
   const res = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token, action: "approve" }) });
   if (res.ok) {
     showConfirm(false);
@@ -179,21 +210,24 @@ $("#paste")?.addEventListener("click", async () => {
 });
 async function ensureMobileSession() {
   if (mobileJwt) return true;
-  const nick = `anon-${Math.random().toString(36).slice(2,6)}`;
-  const tmpId = `u_${Math.random().toString(36).slice(2,10)}_${Date.now().toString(36)}`;
+  const nick = `anon-${(crypto.randomUUID ? crypto.randomUUID().slice(0,4) : secureSuffixM(4))}`;
+  const tmpId = `u_${(crypto.randomUUID ? crypto.randomUUID().replace(/-/g,'').slice(0,8) : secureSuffixM(8))}_${Date.now().toString(36)}`;
   const res = await fetch(api2("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: tmpId, displayName: nick }) });
   const data = await res.json().catch(() => ({}));
   if (data.token) { mobileJwt = data.token; mobileDisplay = nick; if (loginOut) loginOut.textContent = `Joined as ${nick} — ephemeral`; return true; }
   return false;
 }
 try {
-  const p = new URL(location.href).searchParams.get("token");
+  const p = getTokenFromUrl();
   if (p) {
     $("#token").value = p;
     e2eKeyM = await deriveE2EKeyM(p);
-    privateRoomM = `dm_${p.slice(0,12)}`;
-    // Hide token from address bar immediately (privacy) — keep it only in memory
-    history.replaceState(null, "", location.pathname);
+    privateRoomM = await roomIdFromTokenM(p);
+    // Hide token from address bar immediately (privacy) — keep it only in memory (clear both hash and query)
+    try{ history.replaceState(null, "", location.pathname + location.search.replace(/[\?&]token=[^&]+/g,'').replace(/^&/,'?')); }catch{}
+    try{ if(location.hash.includes("token=")) history.replaceState(null, "", location.pathname + location.search); }catch{}
+    // Ensure hash cleared
+    if(location.hash) try{ location.hash=""; }catch{}
     // Hide UI instantly (no flash) — already hidden via html.scanned CSS, ensure chat visible
     const ic = document.getElementById("inviteCard");
     if (ic) ic.style.display = "none";

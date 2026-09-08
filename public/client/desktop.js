@@ -13,9 +13,9 @@ let gated=true;
 let jwt="", identity=null;
 let currentRoom="general";
 let e2eKey=null;
-const debugMode=new URLSearchParams(location.search).has("debug");
+const debugMode=new URLSearchParams(location.search).has("debug") && (location.hostname === "localhost" || location.hostname === "127.0.0.1");
 function toast(t){ if(!toastsEl) return; const d=document.createElement("div"); d.className="toast"; d.textContent=t; toastsEl.appendChild(d); setTimeout(()=>d.remove(),2600); }
-function log(...a){ if(debugMode&&debugEl){ debugEl.style.display="block"; debugEl.textContent+=a.map(x=>typeof x==="string"?x:JSON.stringify(x)).join(" ")+"\n"; } console.log(...a); }
+function log(...a){ if(debugMode&&debugEl){ debugEl.style.display="block"; debugEl.textContent+=a.map(x=>typeof x==="string"?x:JSON.stringify(x)).join(" ")+"\n"; } if(debugMode) console.log(...a); }
 function setGated(on){
   gated=on;
   document.body.classList.toggle("gated",on);
@@ -44,10 +44,25 @@ function updateSend(){ if(sendBtn&&inputEl) sendBtn.disabled=!(chatWs&&chatWs.re
 function openModal(){ setGated(true); }
 function closeModal(){ if(gated) return; const qrView=document.getElementById("qrView"), chatView=document.getElementById("chatView"); if(qrView) {qrView.style.display="none"; qrView.classList.add("hide");} if(chatView){chatView.style.display="grid"; chatView.classList.remove("hide");} modal?.classList.remove("open"); }
 function updateHero(){ if(heroEl&&msgsEl) heroEl.style.display=msgsEl.querySelector(".row")?"none":""; }
+// --- helpers: secure random id/nick (replace Math.random) ---
+function secureSuffix(len){
+  const bytes=new Uint8Array(Math.ceil(len*3/4));
+  crypto.getRandomValues(bytes);
+  let s=btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  return s.slice(0,len);
+}
 async function deriveE2EKey(rawToken){
   if(!rawToken) return null;
-  const h=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawToken));
-  return crypto.subtle.importKey("raw", h, {name:"AES-GCM"}, false, ["encrypt","decrypt"]);
+  try{
+    // Use HKDF-SHA256 with empty salt and info "qrchat-e2e-v1" to derive a 256-bit AES-GCM key.
+    // Fallback to single hash if HKDF unsupported.
+    const enc=new TextEncoder();
+    const ikm=await crypto.subtle.importKey("raw", enc.encode(rawToken), {name:"HKDF"}, false, ["deriveKey"]);
+    return await crypto.subtle.deriveKey({name:"HKDF", hash:"SHA-256", salt:new Uint8Array(0), info:enc.encode("qrchat-e2e-v1")}, ikm, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
+  }catch{
+    const h=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawToken));
+    return crypto.subtle.importKey("raw", h, {name:"AES-GCM"}, false, ["encrypt","decrypt"]);
+  }
 }
 async function e2eEncrypt(plain,key){
   if(!key||!privateRoomId||!privateRoomId.startsWith("dm_")) return plain;
@@ -90,8 +105,8 @@ function renderQr(el,text){
 }
 async function ensureEphemeralIdentity(){
   if(jwt&&identity) return;
-  const nick=`anon-${Math.random().toString(36).slice(2,6)}`;
-  const tmpId=`u_${Math.random().toString(36).slice(2,10)}_${Date.now().toString(36)}`;
+  const nick=`anon-${(crypto.randomUUID ? crypto.randomUUID().slice(0,4) : secureSuffix(4))}`;
+  const tmpId=`u_${(crypto.randomUUID ? crypto.randomUUID().replace(/-/g,'').slice(0,8) : secureSuffix(8))}_${Date.now().toString(36)}`;
   try{
     const res=await fetch(api("/api/auth/dev-login"),{method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({userId:tmpId, displayName:nick})});
     const data=await res.json().catch(()=>({}));
@@ -120,7 +135,7 @@ async function gen(){
   if(!res.ok){
     log("create failed",data);
     setStatus("Failed");
-    if(qrEl) qrEl.innerHTML=`<div class="empty">Failed — ${data.error||res.status}</div>`;
+    if(qrEl){ qrEl.innerHTML=""; const d=document.createElement("div"); d.className="empty"; d.textContent=`Failed — ${data.error||res.status}`; qrEl.appendChild(d); }
     return;
   }
   try{
@@ -129,7 +144,8 @@ async function gen(){
     if(privateRoomId) currentRoom=privateRoomId;
     createdAsHost=!!jwt;
     try{ e2eKey=await deriveE2EKey(currentToken); }catch{}
-    const qrText=API_BASE?`${location.origin}/mobile?token=${encodeURIComponent(data.token)}`:data.url;
+    // Use fragment (#token=) so token never hits server logs/Referer — mobile reads hash first, then falls back to ?token=
+    const qrText=API_BASE?`${location.origin}/mobile#token=${encodeURIComponent(data.token)}`:data.url.replace("?token=","#token=");
     setStatus(createdAsHost?`Invite · ${privateRoomId} — scan to chat`:"Scan with mobile");
     setTimer();
     countdownTimer=setInterval(setTimer,400);
