@@ -156,8 +156,12 @@
         <div class="col">
           <section class="hero" id="hero">
             <h1>What should we<br>talk about<em> — securely?</em></h1>
-            <p>Link this device to start. The ticket burns in 90 seconds.</p>
-            <button class="primary-btn" id="heroLinkBtn" style="padding:12px 18px">Generate link</button>
+            <p>No account. Just a nickname — ephemeral, auto-deleted. Invite the second person with a QR.</p>
+            <div style="display:flex; gap:10px; margin-top:18px; max-width:420px">
+              <input id="nickInput" placeholder="Your nickname" maxlength="24" autocomplete="off" style="flex:1; background:var(--card); border:1px solid var(--line-2); color:var(--txt); border-radius:12px; padding:12px 14px; font-size:14px; outline:none" />
+              <button class="primary-btn" id="enterBtn" style="padding:12px 18px; flex:0 0 auto">Enter chat</button>
+            </div>
+            <p class="mono" style="margin-top:10px; font-size:11px; color:var(--dim)">Random ID · no email/phone · IP not logged · messages auto-expire · E2E on invite rooms</p>
           </section>
           <div class="presence" id="presence"></div>
           <div id="msgs" role="log" aria-live="polite" aria-relevant="additions"></div>

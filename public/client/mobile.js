@@ -1,4 +1,5 @@
-// Mobile — scan → chat directly with host. Contract: preview → ack → approve → auto-join #general.
+// Mobile — scan to chat directly, nickname-only, ephemeral, E2E on dm_*.
+try { localStorage.clear(); sessionStorage.clear(); } catch {}
 const API_BASE2 = (typeof window !== "undefined" && window.__API_BASE__ ? window.__API_BASE__ : "").replace(/\/$/, "");
 const api2 = (p) => `${API_BASE2}${p}`;
 const wsBase2 = () => (API_BASE2 ? API_BASE2.replace(/^http/, "ws") : `${location.protocol}//${location.host}`);
@@ -8,7 +9,10 @@ const previewOut = $("#previewOut");
 const details = $("#details");
 const confirm = $("#confirm");
 const dock = $("#dock");
-let mobileJwt = localStorage.getItem("mobile_jwt") || "";
+let mobileJwt = ""; // ephemeral
+let mobileDisplay = "";
+let privateRoomM = null;
+let e2eKeyM = null;
 
 function showConfirm(open) {
   if (confirm) confirm.classList.toggle("open", open);
@@ -17,44 +21,27 @@ function showConfirm(open) {
 }
 showConfirm(false);
 
-$("#login")?.addEventListener("click", async () => {
-  const userId = ($("#userId")?.value || "").trim() || "alice";
-  const res = await fetch(api2("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId, displayName: userId }) });
-  const data = await res.json().catch(() => ({}));
-  if (data.token) {
-    mobileJwt = data.token;
-    localStorage.setItem("mobile_jwt", mobileJwt);
-    if (loginOut) loginOut.textContent = `Session ready as ${data.userId}.`;
-  } else if (loginOut) loginOut.textContent = "Could not mint session.";
-});
-$("#preview")?.addEventListener("click", async () => {
-  const raw = ($("#token")?.value || "").trim();
-  if (!raw) return alert("Paste token");
-  let t = raw;
-  try { const u = new URL(raw); const p = u.searchParams.get("token"); if (p) t = p; } catch {}
-  $("#token").value = t;
-  if (previewOut) previewOut.textContent = "Checking…";
-  const res = await fetch(api2(`/api/auth/qr/preview?token=${encodeURIComponent(t)}`));
-  const data = await res.json().catch(() => ({}));
-  if (data.status === "pending" || (res.ok && data.status)) {
-    const left = data.expiresAt ? Math.max(0, Math.round((data.expiresAt - Date.now()) / 1000)) : "?";
-    const host = data.host ? `Host ${data.host.displayName || data.host.userId}` : "Host (ticket)";
-    if (previewOut) previewOut.textContent = `${host} · Pending · ${left}s left.`;
-    if (details) {
-      details.innerHTML = "";
-      [host, `Created ${data.createdAt ? new Date(data.createdAt).toLocaleTimeString() : "?"}`, `Expires in ${left}s`, `Token ${data.tokenPreview || t.slice(0, 8) + "…"}`]
-        .forEach((x) => { const li = document.createElement("li"); li.textContent = x; details.appendChild(li); });
-    }
-    const ack = $("#ack"), approve = $("#approve");
-    if (ack) ack.checked = false;
-    if (approve) approve.disabled = true;
-    showConfirm(true);
-  } else {
-    showConfirm(false);
-    if (previewOut) previewOut.textContent = "Not pending — cannot approve.";
-  }
-});
-$("#ack")?.addEventListener("change", (e) => { const a = $("#approve"); if (a) a.disabled = !e.target.checked; });
+async function deriveE2EKeyM(rawToken) {
+  if (!rawToken) return null;
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawToken));
+  return crypto.subtle.importKey("raw", h, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function e2eEncryptM(plain, key) {
+  if (!key || !privateRoomM || !privateRoomM.startsWith("dm_")) return plain;
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(plain));
+  return `enc:${btoa(String.fromCharCode(...new Uint8Array(ct)))}.${btoa(String.fromCharCode(...iv))}`;
+}
+async function e2eDecryptM(payload, key) {
+  if (!key || typeof payload !== "string" || !payload.startsWith("enc:")) return payload;
+  try {
+    const [b64ct, b64iv] = payload.slice(4).split(".");
+    const ct = Uint8Array.from(atob(b64ct), (c) => c.charCodeAt(0));
+    const iv = Uint8Array.from(atob(b64iv), (c) => c.charCodeAt(0));
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
+    return new TextDecoder().decode(pt);
+  } catch { return payload; }
+}
 let mWs = null;
 function mAppend(text, mine) {
   const wrap = $("#mmsgs");
@@ -77,52 +64,104 @@ function mSystem(t) {
   wrap.appendChild(d);
   wrap.scrollTop = wrap.scrollHeight;
 }
-function joinChat() {
+async function joinChatM() {
   const wrap = $("#chatWrap"), st = $("#chatState"), inp = $("#mInput"), btn = $("#mSend");
+  const room = privateRoomM || "general";
   if (wrap) wrap.classList.add("open");
-  if (st) st.textContent = "connected · #general";
-  if (!mobileJwt) { mSystem("Mint a session first"); return; }
+  if (st) st.textContent = `connected · ${room} (2-person, E2E)`;
+  if (!mobileJwt) { mSystem("Mint a nickname first"); return; }
   if (mWs) try { mWs.close(); } catch {}
-  // Direct chat with host — same #general room as desktop (short domain Pages + Worker WSS)
-  const url = `${wsBase2()}/api/room/general/ws?token=${encodeURIComponent(mobileJwt)}`;
+  const url = `${wsBase2()}/api/room/${encodeURIComponent(room)}/ws?token=${encodeURIComponent(mobileJwt)}`;
   mWs = new WebSocket(url);
-  mWs.onopen = () => { mSystem("You joined — say hello to host"); if (btn) btn.disabled = false; if (inp) inp.focus(); };
-  mWs.onmessage = (e) => {
+  mWs.onopen = () => { mSystem(`You joined ${room} as ${mobileDisplay || "anon"} — E2E on`); if (btn) btn.disabled = false; if (inp) inp.focus(); };
+  mWs.onmessage = async (e) => {
     try {
       const d = JSON.parse(e.data);
-      if (d.type === "welcome" && d.history?.length) d.history.forEach((m) => mAppend(`${m.displayName || m.userId}: ${m.body}`, false));
-      else if (d.type === "message") {
+      if (d.type === "welcome" && d.history?.length) {
+        for (const m of d.history) {
+          const body = await e2eDecryptM(m.body, e2eKeyM);
+          mAppend(`${m.displayName || m.userId}: ${body}`, false);
+        }
+      } else if (d.type === "message") {
+        const body = await e2eDecryptM(d.message.body, e2eKeyM);
         const mine = d.message.userId === (JSON.parse(atob(mobileJwt.split(".")[1]))?.userId);
-        mAppend(`${d.message.displayName || d.message.userId}: ${d.message.body}`, mine);
-      }
-      else if (d.type === "presence") mSystem(`${d.userId} ${d.event}ed`);
+        mAppend(`${d.message.displayName || d.message.userId}: ${body}`, mine);
+      } else if (d.type === "presence") mSystem(`${d.userId} ${d.event}ed`);
     } catch {}
   };
-  mWs.onclose = () => { mSystem("Disconnected"); const b = $("#mSend"); if (b) b.disabled = true; };
-  const send = () => {
+  mWs.onclose = () => { mSystem("Disconnected — refresh erases (ephemeral)"); const b = $("#mSend"); if (b) b.disabled = true; };
+  const send = async () => {
     const v = inp?.value.trim();
     if (!v || !mWs || mWs.readyState !== 1) return;
-    mWs.send(JSON.stringify({ type: "message", roomId: "general", body: v }));
+    const out = await e2eEncryptM(v, e2eKeyM);
+    mWs.send(JSON.stringify({ type: "message", roomId: room, body: out }));
     if (inp) inp.value = "";
   };
   btn?.addEventListener("click", send);
   inp?.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
 }
 
+$("#login")?.addEventListener("click", async () => {
+  const nick = ($("#userId")?.value || "").trim() || `anon-${Math.random().toString(36).slice(2,6)}`;
+  if (nick.length < 2 || nick.length > 24) return alert("Nickname 2–24 chars");
+  const tmpId = `u_${Math.random().toString(36).slice(2,10)}_${Date.now().toString(36)}`;
+  const res = await fetch(api2("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: tmpId, displayName: nick }) });
+  const data = await res.json().catch(() => ({}));
+  if (data.token) {
+    mobileJwt = data.token; mobileDisplay = nick;
+    if (loginOut) loginOut.textContent = `Ready as ${nick} · ephemeral ${tmpId.slice(0,8)}… (refresh erases)`;
+  } else if (loginOut) loginOut.textContent = "Could not mint — try again";
+});
+$("#preview")?.addEventListener("click", async () => {
+  const raw = ($("#token")?.value || "").trim();
+  if (!raw) return alert("Paste token");
+  let t = raw;
+  try { const u = new URL(raw); const p = u.searchParams.get("token"); if (p) t = p; } catch {}
+  $("#token").value = t;
+  if (previewOut) previewOut.textContent = "Checking…";
+  const res = await fetch(api2(`/api/auth/qr/preview?token=${encodeURIComponent(t)}`));
+  const data = await res.json().catch(() => ({}));
+  if (data.status === "pending" || (res.ok && data.status)) {
+    const left = data.expiresAt ? Math.max(0, Math.round((data.expiresAt - Date.now()) / 1000)) : "?";
+    const host = data.host ? `Host ${data.host.displayName || data.host.userId}` : "Host (ticket)";
+    privateRoomM = data.roomId || privateRoomM;
+    e2eKeyM = await deriveE2EKeyM(t);
+    if (previewOut) previewOut.textContent = `${host} · ${data.roomId ? "room " + data.roomId + " (2-person, E2E) ·" : ""} Pending · ${left}s left.`;
+    if (details) {
+      details.innerHTML = "";
+      [host, data.roomId ? `Room ${data.roomId} — only 2 can join, E2E` : "", `Created ${data.createdAt ? new Date(data.createdAt).toLocaleTimeString() : "?"}`, `Expires in ${left}s`, `Token ${data.tokenPreview || t.slice(0, 8) + "…"}`]
+        .filter(Boolean).forEach((x) => { const li = document.createElement("li"); li.textContent = x; details.appendChild(li); });
+    }
+    const ack = $("#ack"), approve = $("#approve");
+    if (ack) ack.checked = false;
+    if (approve) approve.disabled = true;
+    showConfirm(true);
+  } else {
+    showConfirm(false);
+    if (previewOut) previewOut.textContent = "Not pending — cannot approve.";
+  }
+});
+$("#ack")?.addEventListener("change", (e) => { const a = $("#approve"); if (a) a.disabled = !e.target.checked; });
 $("#approve")?.addEventListener("click", async () => {
   const token = ($("#token")?.value || "").trim();
-  if (!mobileJwt) return alert("Mint a session first");
+  if (!mobileJwt) return alert("Mint a nickname first (enter above)");
+  if (!token) return alert("Paste token");
+  e2eKeyM = await deriveE2EKeyM(token);
+  privateRoomM = privateRoomM || `dm_${token.slice(0,12)}`; // fallback derive
   const res = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token, action: "approve" }) });
   if (res.ok) {
     showConfirm(false);
-    if (previewOut) previewOut.textContent = "Approved — opening chat…";
+    if (previewOut) previewOut.textContent = "Approved — opening E2E chat…";
     // Directly able to chat with host now (no extra step)
-    joinChat();
-  } else alert("Approve failed");
+    joinChatM();
+  } else {
+    const d = await res.json().catch(()=>({}));
+    alert("Approve failed: " + (d.error || res.status));
+  }
 });
 $("#deny")?.addEventListener("click", async () => {
   const token = ($("#token")?.value || "").trim();
-  if (!mobileJwt) return alert("Mint a session first");
+  if (!mobileJwt) return alert("Mint first");
   const res = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token, action: "deny" }) });
   if (res.ok) { showConfirm(false); if (previewOut) previewOut.textContent = "Denied."; }
   else alert("Deny failed");
@@ -132,5 +171,7 @@ $("#paste")?.addEventListener("click", async () => {
 });
 try {
   const p = new URL(location.href).searchParams.get("token");
-  if (p) $("#token").value = p;
+  if (p) { $("#token").value = p; e2eKeyM = await deriveE2EKeyM(p); privateRoomM = `dm_${p.slice(0,12)}`; }
 } catch {}
+// Refresh erases: no restore from storage — always start fresh
+

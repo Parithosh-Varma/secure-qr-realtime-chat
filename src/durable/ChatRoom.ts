@@ -13,11 +13,11 @@
  * Hibernation: uses state.acceptWebSocket() so connections survive eviction.
  */
 
-import { log, redactIp } from "../lib/logger";
+import { log, hashForLog } from "../lib/logger";
 import { sanitizeMessage, validateRoomId } from "../lib/sanitize";
 import { createModerationHook } from "../lib/moderation";
 import type { ChatMessage } from "../lib/types";
-import { MAX_MESSAGE_LENGTH, MAX_PAYLOAD_BYTES, MAX_ROOM_HISTORY } from "../lib/constants";
+import { MAX_PAYLOAD_BYTES, MAX_ROOM_HISTORY } from "../lib/constants";
 import { verifyJwt, extractBearer } from "../lib/jwt";
 
 // Stored keys
@@ -28,9 +28,8 @@ import { verifyJwt, extractBearer } from "../lib/jwt";
 type SessionMeta = {
   userId: string;
   displayName?: string;
-  ip: string;
+  // no ip stored — privacy: "Be careful about logging IP addresses" + "Don't retain unnecessary connection metadata"
   connectedAt: number;
-  lastSeen: number;
 };
 
 type ChatEnv = {
@@ -140,16 +139,27 @@ export class ChatRoom implements DurableObject {
     // Room membership check server-side (never trust client)
     const allowed = await this.checkMembership(claims.userId, vRoom.value!);
     if (!allowed) {
-      log("warn", "room.forbidden", { roomId: vRoom.value, userId: claims.userId, ip: redactIp(req.headers.get("CF-Connecting-IP") || "unknown") });
+      log("warn", "room.forbidden", { roomId: vRoom.value, userId: claims.userId });
       return Response.json({ error: "Not a member of this room" }, { status: 403 });
     }
 
-    // Rate-limit connections per IP / per user via RateLimiter DO if available
-    const ip = req.headers.get("CF-Connecting-IP") || req.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
+    // 2-person cap: only host + one visitor per private invite room (dm_*) — and 2 per any room for this app
+    const distinctUsers = new Set([...this.sessions.values()].map((s) => s.userId));
+    for (const w of this.state.getWebSockets()) {
+      const a = w.deserializeAttachment() as SessionMeta | null;
+      if (a) distinctUsers.add(a.userId);
+    }
+    if (distinctUsers.size >= 2 && !distinctUsers.has(claims.userId)) {
+      log("warn", "room.full", { roomId: vRoom.value, present: distinctUsers.size });
+      return Response.json({ error: "Room is full — only 2 people allowed", max: 2 }, { status: 403 });
+    }
+
+    // Rate-limit (privacy: use hashed userId/IP, not raw IP in logs)
+    const ip = req.headers.get("CF-Connecting-IP") || "unknown";
     if (this.env.RATE_LIMITER) {
-      const rl = await this.checkRateLimitWithDo(`conn:ip:${ip}`, { limit: 30, windowMs: 60_000 });
+      const rl = await this.checkRateLimitWithDo(`conn:ip:${hashForLog(ip)}`, { limit: 30, windowMs: 60_000 });
       if (!rl.allowed) return Response.json({ error: "Too many connections", retryAfterMs: rl.resetMs }, { status: 429 });
-      const rlUser = await this.checkRateLimitWithDo(`conn:user:${claims.userId}`, { limit: 30, windowMs: 60_000 });
+      const rlUser = await this.checkRateLimitWithDo(`conn:user:${hashForLog(claims.userId)}`, { limit: 30, windowMs: 60_000 });
       if (!rlUser.allowed) return Response.json({ error: "Too many connections" }, { status: 429 });
     }
 
@@ -163,9 +173,7 @@ export class ChatRoom implements DurableObject {
     const meta: SessionMeta = {
       userId: claims.userId,
       displayName: claims.displayName,
-      ip,
       connectedAt: Date.now(),
-      lastSeen: Date.now(),
     };
 
     // Hibernation: attach metadata so it survives eviction
@@ -173,7 +181,7 @@ export class ChatRoom implements DurableObject {
     server.serializeAttachment(meta);
     this.sessions.set(server, meta);
 
-    log("info", "room.join", { roomId: vRoom.value, userId: claims.userId, ip: redactIp(ip) });
+    log("info", "room.join", { roomId: vRoom.value, userId: hashForLog(claims.userId) });
 
     // Send history + welcome
     const history = await this.getHistory(vRoom.value!);
@@ -246,17 +254,12 @@ export class ChatRoom implements DurableObject {
       return;
     }
 
-    // Rate limit messages per user/IP
+    // Rate limit messages per user (privacy: no IP retained)
     if (this.env.RATE_LIMITER) {
-      const rlUser = await this.checkRateLimitWithDo(`msg:user:${meta.userId}`, { limit: 20, windowMs: 10_000 });
+      const rlUser = await this.checkRateLimitWithDo(`msg:user:${hashForLog(meta.userId)}`, { limit: 20, windowMs: 10_000 });
       if (!rlUser.allowed) {
         this.sendError(ws, "Rate limited", 1013);
         ws.send(JSON.stringify({ type: "error", code: "rate_limited", retryAfterMs: rlUser.resetMs }));
-        return;
-      }
-      const rlIp = await this.checkRateLimitWithDo(`msg:ip:${meta.ip}`, { limit: 40, windowMs: 10_000 });
-      if (!rlIp.allowed) {
-        this.sendError(ws, "Rate limited");
         return;
       }
     } else {
@@ -275,9 +278,9 @@ export class ChatRoom implements DurableObject {
     }
     const cleanBody = s.value!;
 
-    // Moderation hook — flag or block before broadcast
+    // Moderation hook — flag or block before broadcast (privacy: no IP passed)
     const modHook = createModerationHook(this.env as unknown as { MODERATION_KEY?: string });
-    const mod = await modHook(cleanBody, { userId: meta.userId, roomId: vRoom.value!, ip: meta.ip });
+    const mod = await modHook(cleanBody, { userId: meta.userId, roomId: vRoom.value!, ip: "***" });
     if (!mod.allowed) {
       log("warn", "moderation.blocked_broadcast", { roomId: vRoom.value, userId: meta.userId, reason: mod.reason });
       ws.send(JSON.stringify({ type: "moderation", allowed: false, reason: mod.reason, ts: Date.now() }));
@@ -447,6 +450,13 @@ export class ChatRoom implements DurableObject {
   private async appendHistory(msg: ChatMessage): Promise<void> {
     const key = `messages:${msg.roomId}:${String(msg.ts).padStart(13, "0")}:${msg.id}`;
     await this.storage.put(key, msg);
+    // Set auto-expiration alarm (ephemeral: 24h, or 1h for dm_*). Privacy: automatic deletion.
+    const ttl = msg.roomId.startsWith("dm_") ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const alarmAt = Date.now() + ttl;
+    const cur = await this.storage.getAlarm();
+    if (cur === null || alarmAt < cur) await this.storage.setAlarm(alarmAt);
+    // Also ensure periodic GC if already scheduled far
+    if (cur === null) await this.storage.setAlarm(Date.now() + 60 * 60 * 1000);
     // Trim oldest if over limit (list + delete)
     const all = await this.storage.list<ChatMessage>({ prefix: `messages:${msg.roomId}:` });
     if (all.size > MAX_ROOM_HISTORY) {
@@ -512,6 +522,31 @@ export class ChatRoom implements DurableObject {
     recent.push(now);
     this.msgCounts.set(key, recent);
     return true;
+  }
+
+  async alarm(): Promise<void> {
+    // Auto-delete expired messages (privacy: ephemeral)
+    const now = Date.now();
+    const all = await this.storage.list<ChatMessage>({ prefix: "messages:" });
+    let deleted = 0;
+    for (const [k, v] of all) {
+      const age = now - v.ts;
+      const ttl = v.roomId.startsWith("dm_") ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+      if (age > ttl) {
+        await this.storage.delete(k);
+        deleted++;
+      }
+    }
+    // If no sessions and no messages, clean up fully; else reschedule
+    const sessions = this.state.getWebSockets().length;
+    const remaining = await this.storage.list({ prefix: "messages:" });
+    if (remaining.size === 0 && sessions === 0) {
+      // fully ephemeral — delete all
+      await this.storage.deleteAll();
+    } else if (deleted > 0 || remaining.size > 0) {
+      await this.storage.setAlarm(now + 60 * 60 * 1000);
+    }
+    if (deleted) log("info", "room.gc", { deleted, remaining: remaining.size });
   }
 
   private async inferRoomId(): Promise<string | null> {

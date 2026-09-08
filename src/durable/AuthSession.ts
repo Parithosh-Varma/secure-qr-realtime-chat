@@ -20,6 +20,7 @@ type StoredState = {
   expiresAt: number;
   fingerprint: QrSessionState["fingerprint"];
   tokenHash: string;
+  roomId: string; // private 2-person room derived from tokenHash
   host?: UserIdentity; // who created the QR (for invite-to-chat)
   approver?: UserIdentity & { approvedAt: number };
   claimedAt?: number;
@@ -59,13 +60,14 @@ export class AuthSession implements DurableObject {
 
   // ---- Create pending session ----
   private async handleCreate(req: Request): Promise<Response> {
-    // Body: { tokenHash, fingerprint, ttlMs, host? }
-    const body = (await req.json().catch(() => null)) as { tokenHash?: string; fingerprint?: StoredState["fingerprint"]; ttlMs?: number; host?: UserIdentity } | null;
+    // Body: { tokenHash, fingerprint, ttlMs, host?, roomId? }
+    const body = (await req.json().catch(() => null)) as { tokenHash?: string; fingerprint?: StoredState["fingerprint"]; ttlMs?: number; host?: UserIdentity; roomId?: string } | null;
     if (!body?.tokenHash || !body.fingerprint || typeof body.ttlMs !== "number") {
       return Response.json({ error: "Invalid body" }, { status: 400 });
     }
     const { tokenHash, fingerprint, ttlMs, host } = body;
     if (ttlMs < 60_000 || ttlMs > 120_000) return Response.json({ error: "TTL must be 60-120s" }, { status: 400 });
+    const roomId = body.roomId && /^[a-zA-Z0-9_-]{3,64}$/.test(body.roomId) ? body.roomId : `dm_${tokenHash.slice(0, 12)}`;
 
     const existing = await this.storage.get<StoredState>("state");
     if (existing) {
@@ -82,6 +84,7 @@ export class AuthSession implements DurableObject {
       expiresAt: now + ttlMs,
       fingerprint,
       tokenHash,
+      roomId,
       host: host?.userId ? { userId: host.userId, displayName: host.displayName, email: host.email } : undefined,
     };
     await this.storage.put("state", state);
@@ -111,6 +114,7 @@ export class AuthSession implements DurableObject {
       status: state.status,
       createdAt: state.createdAt,
       expiresAt: state.expiresAt,
+      roomId: state.roomId,
       host: state.host ? { userId: state.host.userId, displayName: state.host.displayName } : undefined,
     };
     // Only expose approver presence, not identity, on status poll (desktop is unauthenticated)
@@ -207,6 +211,7 @@ export class AuthSession implements DurableObject {
     return Response.json({
       ok: true,
       status: "claimed",
+      roomId: state.roomId,
       identity: { userId: approver.userId, displayName: approver.displayName, email: approver.email },
     });
   }

@@ -1,9 +1,11 @@
-// Secure Chat — minimal shell. Gate: QR only until scanned + connected, then chat UI.
-// Flows unchanged: opaque ticket → approve → burn → JWT → WSS.
+// Secure Chat — ephemeral, 2-person, nickname-only, E2E on invite rooms.
+// Privacy: random temp IDs, no email/phone, IP not logged, messages auto-expire, storage URL is dm_* hash, refresh erases everything.
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 
-// API base: same-origin by default (Worker-served). Pages sets window.__API_BASE__ via /config.js.
+// Ephemeral: clear any persisted session on load — refreshing erases everything
+try { localStorage.clear(); sessionStorage.clear(); } catch {}
+// Pages → Worker wiring
 const API_BASE = (typeof window !== "undefined" && window.__API_BASE__ ? window.__API_BASE__ : "").replace(/\/$/, "");
 const api = (p) => `${API_BASE}${p}`;
 const wsBase = () => (API_BASE ? API_BASE.replace(/^http/, "ws") : `${location.protocol}//${location.host}`);
@@ -31,12 +33,12 @@ const roomNameEl = $("#roomName");
 const RING_C = 97.4;
 
 let pollTimer = null, countdownTimer = null, ws = null, chatWs = null;
-let currentToken = null, expiresAt = 0, createdAsHost = false;
+let currentToken = null, expiresAt = 0, createdAsHost = false, privateRoomId = null;
 let gated = true;
-let jwt = localStorage.getItem("chat_jwt") || "";
+let jwt = ""; // ephemeral, not persisted
 let identity = null;
-try { identity = JSON.parse(localStorage.getItem("chat_identity") || "null"); } catch { identity = null; }
 let currentRoom = "general";
+let e2eKey = null; // derived from raw invite token — only host+visitor know it, server cannot read dm_* messages
 const debugMode = new URLSearchParams(location.search).has("debug");
 
 function toast(t) {
@@ -72,26 +74,49 @@ function setTimer() {
   if (s === 0) setStatus("Expired");
 }
 function renderMe() {
-  const name = jwt && identity ? identity.userId : null;
+  const name = jwt && identity ? identity.displayName || identity.userId : null;
   if (meEl) meEl.textContent = name || "Not linked";
-  if (meSub) meSub.textContent = name ? "pass · 1h" : "ticket required";
+  if (meSub) meSub.textContent = name ? `${name} · ephemeral` : "enter nickname to start";
   if (avatarEl) avatarEl.textContent = name ? name.slice(0, 1).toUpperCase() : "?";
   updateSend();
+  if (roomNameEl) roomNameEl.textContent = privateRoomId || currentRoom;
 }
 function updateSend() {
   if (sendBtn && inputEl) sendBtn.disabled = !(chatWs && chatWs.readyState === 1 && inputEl.value.trim());
 }
 function openModal() { modal?.classList.add("open"); }
 function closeModal() {
-  if (gated) return; // gate is non-dismissable: scan + connect first
+  if (gated) return;
   modal?.classList.remove("open");
 }
 function updateHero() {
   if (heroEl && msgsEl) heroEl.style.display = msgsEl.querySelector(".row") ? "none" : "";
 }
 
+// --- E2E: AES-GCM key from raw invite token (server stores only hash, cannot decrypt) ---
+async function deriveE2EKey(rawToken) {
+  if (!rawToken) return null;
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawToken));
+  return crypto.subtle.importKey("raw", hash, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+async function e2eEncrypt(plain, key) {
+  if (!key || !privateRoomId || !privateRoomId.startsWith("dm_")) return plain;
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(plain));
+  return `enc:${btoa(String.fromCharCode(...new Uint8Array(ct)))}.${btoa(String.fromCharCode(...iv))}`;
+}
+async function e2eDecrypt(payload, key) {
+  if (!key || typeof payload !== "string" || !payload.startsWith("enc:")) return payload;
+  try {
+    const [b64ct, b64iv] = payload.slice(4).split(".");
+    const ct = Uint8Array.from(atob(b64ct), (c) => c.charCodeAt(0));
+    const iv = Uint8Array.from(atob(b64iv), (c) => c.charCodeAt(0));
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
+    return new TextDecoder().decode(pt);
+  } catch { return payload; }
+}
+
 function renderQr(el, text) {
-  // Vendored qrcode-generator (same-origin /client/qrcode.min.js) — primary path.
   try {
     if (typeof qrcode !== "undefined") {
       const qr = qrcode(0, "M");
@@ -108,7 +133,6 @@ function renderQr(el, text) {
       return Promise.resolve(true);
     }
   } catch (e) { console.warn("qrcode render failed", e); }
-  // Secondary: node-qrcode UMD if ever present.
   try {
     if (typeof QRCode !== "undefined" && QRCode && QRCode.toCanvas) {
       const c = document.createElement("canvas");
@@ -147,10 +171,12 @@ async function gen() {
     return;
   }
   currentToken = data.token; expiresAt = data.expiresAt;
-  createdAsHost = !!jwt; // if we were already linked, this QR is an invite to chat with me
-  // QR encodes Pages origin (so phone lands on Pages /mobile, not Worker). data.url is Worker origin when called via API_BASE.
+  privateRoomId = data.roomId || null;
+  if (privateRoomId) currentRoom = privateRoomId;
+  createdAsHost = !!jwt;
+  e2eKey = await deriveE2EKey(currentToken);
   const qrText = API_BASE ? `${location.origin}/mobile?token=${encodeURIComponent(data.token)}` : data.url;
-  setStatus(createdAsHost ? "Invite — scan to chat with me" : "Scan with mobile");
+  setStatus(createdAsHost ? `Invite · ${privateRoomId} — scan to chat` : "Scan with mobile");
   setTimer();
   countdownTimer = setInterval(setTimer, 400);
   if (qrEl) {
@@ -174,8 +200,11 @@ function tryWs(token) {
       try {
         const m = JSON.parse(e.data);
         if (m.status === "approved") {
-          if (createdAsHost) { setStatus("Joined — say hello"); toast("Someone joined your chat"); setGated(false); modal?.classList.remove("open"); connectChat(currentRoom); cleanup(); }
-          else { setStatus("Approved"); claim(token); }
+          if (createdAsHost) {
+            const r = m.roomId || privateRoomId || currentRoom;
+            if (r) { privateRoomId = r; currentRoom = r; }
+            setStatus("Joined — say hello"); toast(`Someone joined ${r} — 2-person, E2E`); setGated(false); modal?.classList.remove("open"); connectChat(r); cleanup();
+          } else { setStatus("Approved"); claim(token); }
         }
         if (m.status === "denied") { setStatus("Denied"); cleanup(); }
         if (m.status === "expired") { setStatus("Expired"); cleanup(); }
@@ -191,8 +220,11 @@ function startPolling(token) {
     catch { return; }
     const data = await res.json().catch(() => ({}));
     if (data.status === "approved") {
-      if (createdAsHost) { setStatus("Joined — say hello"); toast("Someone joined your chat"); setGated(false); modal?.classList.remove("open"); connectChat(currentRoom); cleanup(); }
-      else { setStatus("Approved"); claim(token); }
+      if (createdAsHost) {
+        const r = data.roomId || privateRoomId || currentRoom;
+        if (r) { privateRoomId = r; currentRoom = r; }
+        setStatus("Joined — say hello"); toast(`Someone joined ${r} — 2-person, E2E`); setGated(false); modal?.classList.remove("open"); connectChat(r); cleanup();
+      } else { setStatus("Approved"); claim(token); }
     }
     if (data.status === "denied") { setStatus("Denied"); cleanup(); }
     if (data.status === "expired") { setStatus("Expired"); cleanup(); }
@@ -207,15 +239,16 @@ async function claim(token) {
   const data = await res.json().catch(() => ({}));
   if (res.ok && data.token) {
     jwt = data.token; identity = data.identity;
-    localStorage.setItem("chat_jwt", jwt);
-    localStorage.setItem("chat_identity", JSON.stringify(identity));
+    privateRoomId = data.roomId || privateRoomId;
+    if (privateRoomId) currentRoom = privateRoomId;
+    e2eKey = await deriveE2EKey(token);
     renderMe();
     setStatus("Linked");
     if (timerText) timerText.textContent = "Burned";
-    toast(`Linked as ${identity.userId}`);
-    setGated(false); // reveal the UI — scanned + connected
+    toast(`Linked as ${identity.displayName || identity.userId} · ${privateRoomId} (E2E)`);
+    setGated(false);
     modal?.classList.remove("open");
-    connectChat(currentRoom);
+    connectChat(privateRoomId || currentRoom);
   } else setStatus("Claim failed");
 }
 function cleanup() {
@@ -224,10 +257,10 @@ function cleanup() {
   if (ws) try { ws.close(); } catch {} ws = null;
 }
 
-function connectChat(roomId = "general") {
+async function connectChat(roomId = "general") {
   currentRoom = roomId;
   if (roomNameEl) roomNameEl.textContent = roomId;
-  if (inputEl) inputEl.placeholder = `Message #${roomId}`;
+  if (inputEl) inputEl.placeholder = `Message #${roomId} · E2E if dm_*`;
   $$(".room").forEach((b) => b.classList.toggle("active", b.dataset.room === roomId));
   if (chatWs) try { chatWs.close(); } catch {}
   msgsEl.innerHTML = "";
@@ -235,11 +268,13 @@ function connectChat(roomId = "general") {
   if (!jwt) { setGated(true); openModal(); gen(); return; }
   chatWs = new WebSocket(`${wsBase()}/api/room/${encodeURIComponent(roomId)}/ws?token=${encodeURIComponent(jwt)}`);
   chatWs.onopen = () => renderMe();
-  chatWs.onmessage = (e) => {
+  chatWs.onmessage = async (e) => {
     try {
       const d = JSON.parse(e.data);
-      if (d.type === "welcome") { if (d.history?.length) d.history.forEach(appendMsg); updateHero(); }
-      else if (d.type === "message") appendMsg(d.message);
+      if (d.type === "welcome") {
+        if (d.history?.length) for (const m of d.history) await appendMsg(m);
+        updateHero();
+      } else if (d.type === "message") await appendMsg(d.message);
       else if (d.type === "presence" && presenceEl) {
         presenceEl.style.display = "block";
         presenceEl.textContent = `● ${d.userId} ${d.event}ed`;
@@ -247,26 +282,30 @@ function connectChat(roomId = "general") {
         presenceEl._t = setTimeout(() => (presenceEl.style.display = "none"), 3500);
       }
       else if (d.type === "moderation") { appendSystem("Blocked by moderation."); toast("Blocked"); }
-      else if (d.type === "error") appendSystem("Error — try again.");
+      else if (d.type === "error") appendSystem(d.error.includes("full") ? "Room full — only 2" : "Error — try again");
     } catch {}
   };
-  chatWs.onclose = () => { appendSystem("Disconnected — reload to reconnect."); renderMe(); };
+  chatWs.onclose = () => { appendSystem("Disconnected — reload erases (ephemeral)"); renderMe(); };
   renderMe();
 }
-function appendMsg(m) {
+async function appendMsg(m) {
   const mine = identity && m.userId === identity.userId;
   const div = document.createElement("div");
   div.className = "row " + (mine ? "me" : "peer");
   const who = m.displayName || m.userId;
   const time = new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // E2E decrypt if needed
+  let body = m.body;
+  if (m.roomId?.startsWith("dm_") && e2eKey) body = await e2eDecrypt(body, e2eKey);
+  else if (m.roomId?.startsWith("dm_") && !e2eKey) body = "[encrypted — refresh cleared key]";
   if (mine) {
     div.innerHTML = `<div class="bubble"><div class="body"></div></div>`;
-    div.querySelector(".body").textContent = m.body;
+    div.querySelector(".body").textContent = body;
   } else {
     div.innerHTML = `<div class="ava"></div><div class="bubble"><div class="meta"><b></b><time>${time}</time></div><div class="body"></div></div>`;
     div.querySelector(".ava").textContent = who.slice(0, 1).toUpperCase();
     div.querySelector("b").textContent = who;
-    div.querySelector(".body").textContent = m.body;
+    div.querySelector(".body").textContent = body;
   }
   msgsEl.appendChild(div);
   scrollEl.scrollTop = scrollEl.scrollHeight;
@@ -277,11 +316,13 @@ function appendSystem(t) {
   d.className = "sys"; d.textContent = "— " + t;
   msgsEl.appendChild(d);
 }
-function send() {
+async function send() {
   const body = inputEl.value.trim();
   if (!body) return;
-  if (!chatWs || chatWs.readyState !== 1) { toast("Link this device first"); openModal(); return; }
-  chatWs.send(JSON.stringify({ type: "message", roomId: currentRoom, body }));
+  if (!chatWs || chatWs.readyState !== 1) { toast("Link first"); openModal(); return; }
+  let outBody = body;
+  if (currentRoom.startsWith("dm_") && e2eKey) outBody = await e2eEncrypt(body, e2eKey);
+  chatWs.send(JSON.stringify({ type: "message", roomId: currentRoom, body: outBody }));
   inputEl.value = "";
   autogrow(); updateSend();
 }
@@ -289,6 +330,28 @@ function autogrow() {
   inputEl.style.height = "auto";
   inputEl.style.height = Math.min(160, inputEl.scrollHeight) + "px";
 }
+
+async function enterWithNickname() {
+  const inp = document.getElementById("nickInput");
+  const nick = (inp?.value || "").trim() || `anon-${Math.random().toString(36).slice(2,6)}`;
+  if (nick.length < 2 || nick.length > 24) return toast("Nickname 2–24 chars");
+  const tmpId = `u_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`; // random temporary ID
+  try {
+    const res = await fetch(api("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: tmpId, displayName: nick }) });
+    const data = await res.json();
+    if (!res.ok || !data.token) throw new Error(data.error || "mint failed");
+    jwt = data.token; identity = { userId: data.userId, displayName: nick };
+    // ephemeral room per session (random) — 2-person dm_ will replace this on invite
+    privateRoomId = null; currentRoom = "general";
+    renderMe();
+    toast(`Welcome, ${nick} — ephemeral ${tmpId.slice(0,8)}…`);
+    setGated(false);
+    if (heroEl) heroEl.style.display = "none";
+    connectChat(currentRoom);
+  } catch (e) { toast("Could not enter — try again"); }
+}
+document.getElementById("enterBtn")?.addEventListener("click", enterWithNickname);
+document.getElementById("nickInput")?.addEventListener("keydown", (e) => { if (e.key === "Enter") enterWithNickname(); });
 
 $("#gen")?.addEventListener("click", gen);
 $("#openQrBtn")?.addEventListener("click", () => { openModal(); if (!currentToken || Date.now() > expiresAt) gen(); });
@@ -309,14 +372,9 @@ $("#newChatBtn")?.addEventListener("click", () => { msgsEl.innerHTML = ""; updat
 $("#menuBtn")?.addEventListener("click", () => $("#sidebar")?.classList.add("open"));
 $$(".room").forEach((b) => b.addEventListener("click", () => { connectChat(b.dataset.room); $("#sidebar")?.classList.remove("open"); }));
 
-// Boot: linked sessions go straight to chat; everyone else sees ONLY the QR gate.
+// Boot: ephemeral — always start with nickname hero, never restore from storage (refresh erases)
 renderMe();
 setTimer();
-if (jwt && identity) {
-  setGated(false);
-  setTimeout(() => connectChat(currentRoom), 400);
-} else {
-  setGated(true);
-  appendSystem("Link this device to join.");
-  gen();
-}
+setGated(false);
+if (heroEl) heroEl.style.display = "";
+appendSystem("Enter a nickname above to start — no email, no phone, auto-deleted. Invite 2nd person with Link device → QR (E2E). Refresh erases everything.");

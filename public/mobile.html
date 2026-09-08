@@ -68,10 +68,11 @@
     <p class="sub">Mint your session, scan the QR on my screen, confirm — then we’re in the same room. Direct.</p>
 
     <section class="card">
-      <h2>1 · Your session</h2>
-      <input id="userId" type="text" value="alice" autocomplete="off" aria-label="User id" />
-      <div class="row"><button id="login" class="btn btn-primary">Mint session</button></div>
-      <p class="note" id="loginOut">No session yet.</p>
+      <h2>1 · Your nickname</h2>
+      <p style="font-size:12px; color:var(--mut); margin:0 0 8px">No account. Random ephemeral ID · refresh erases.</p>
+      <input id="userId" type="text" placeholder="Your nickname" maxlength="24" autocomplete="off" aria-label="Nickname" />
+      <div class="row"><button id="login" class="btn btn-primary">Enter</button></div>
+      <p class="note" id="loginOut">No session yet — refreshing erases.</p>
     </section>
 
     <section class="card">
