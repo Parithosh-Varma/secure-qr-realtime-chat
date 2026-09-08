@@ -75,18 +75,16 @@
       <p class="note" id="loginOut">No session yet — refreshing erases.</p>
     </section>
 
-    <section class="card">
+    <section class="card" id="inviteCard">
       <h2>2 · Invite</h2>
-      <input id="token" type="text" placeholder="Paste invite link" autocomplete="off" aria-label="Invite" />
-      <div class="row">
-        <button id="paste" class="btn btn-quiet" type="button">Paste</button>
-        <button id="preview" class="btn btn-primary">Preview</button>
-      </div>
-      <p class="note" id="previewOut">Paste the link from my QR.</p>
+      <p class="note" id="previewOut">Scan the QR on desktop — you’ll join automatically.</p>
       <div id="confirm" role="dialog" aria-labelledby="confirmTitle">
         <ul id="details"></ul>
-        <div class="check"><input id="ack" type="checkbox" /><label for="ack">Join this 1:1 chat — only the two of us.</label></div>
+        <div class="check"><input id="ack" type="checkbox" /><label for="ack">Join this 1:1 chat — only the two of us, E2E.</label></div>
       </div>
+      <input id="token" type="hidden" autocomplete="off" aria-label="Invite" />
+      <button id="paste" class="hide" type="button">Paste</button>
+      <button id="preview" class="hide">Preview</button>
     </section>
 
     <section id="chatWrap" aria-label="Chat with host">

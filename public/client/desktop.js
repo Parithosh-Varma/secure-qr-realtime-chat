@@ -205,7 +205,7 @@ async function gen() {
       qrEl.appendChild(d);
     }
   }
-  if (linkEl && linkWrap) { linkEl.textContent = qrText; linkWrap.style.display = "block"; }
+  if (linkEl && linkWrap) { linkEl.textContent = ""; linkWrap.style.display = "none"; } // token not shown — QR only
   tryWs(data.token);
   startPolling(data.token);
 }

@@ -111,34 +111,39 @@ $("#login")?.addEventListener("click", async () => {
     if (loginOut) loginOut.textContent = `Ready as ${nick} · private ${privateRoomM} (2-person, refresh erases)`;
   } else if (loginOut) loginOut.textContent = "Could not mint — try again";
 });
-$("#preview")?.addEventListener("click", async () => {
-  const raw = ($("#token")?.value || "").trim();
-  if (!raw) return alert("Paste token");
-  let t = raw;
-  try { const u = new URL(raw); const p = u.searchParams.get("token"); if (p) t = p; } catch {}
-  $("#token").value = t;
+async function doPreview(t) {
   if (previewOut) previewOut.textContent = "Checking…";
   const res = await fetch(api2(`/api/auth/qr/preview?token=${encodeURIComponent(t)}`));
   const data = await res.json().catch(() => ({}));
   if (data.status === "pending" || (res.ok && data.status)) {
     const left = data.expiresAt ? Math.max(0, Math.round((data.expiresAt - Date.now()) / 1000)) : "?";
-    const host = data.host ? `Host ${data.host.displayName || data.host.userId}` : "Host (ticket)";
+    const host = data.host ? `${data.host.displayName || data.host.userId}` : "Host";
     privateRoomM = data.roomId || privateRoomM;
     e2eKeyM = await deriveE2EKeyM(t);
-    if (previewOut) previewOut.textContent = `${host} · ${data.roomId ? "room " + data.roomId + " (2-person, E2E) ·" : ""} Pending · ${left}s left.`;
+    if (previewOut) previewOut.textContent = `${host} invited you — 1:1 E2E · ${left}s left`;
     if (details) {
       details.innerHTML = "";
-      [host, data.roomId ? `Room ${data.roomId} — only 2 can join, E2E` : "", `Created ${data.createdAt ? new Date(data.createdAt).toLocaleTimeString() : "?"}`, `Expires in ${left}s`, `Token ${data.tokenPreview || t.slice(0, 8) + "…"}`]
-        .filter(Boolean).forEach((x) => { const li = document.createElement("li"); li.textContent = x; details.appendChild(li); });
+      [ `Private room — only 2`, `Expires in ${left}s` ]
+        .forEach((x) => { const li = document.createElement("li"); li.textContent = x; details.appendChild(li); });
     }
     const ack = $("#ack"), approve = $("#approve");
     if (ack) ack.checked = false;
     if (approve) approve.disabled = true;
     showConfirm(true);
+    return true;
   } else {
     showConfirm(false);
-    if (previewOut) previewOut.textContent = "Not pending — cannot approve.";
+    if (previewOut) previewOut.textContent = "Invite expired — ask for a new QR.";
+    return false;
   }
+}
+$("#preview")?.addEventListener("click", async () => {
+  const raw = ($("#token")?.value || "").trim();
+  if (!raw) return;
+  let t = raw;
+  try { const u = new URL(raw); const p = u.searchParams.get("token"); if (p) t = p; } catch {}
+  $("#token").value = t;
+  await doPreview(t);
 });
 $("#ack")?.addEventListener("change", (e) => { const a = $("#approve"); if (a) a.disabled = !e.target.checked; });
 $("#approve")?.addEventListener("click", async () => {
@@ -168,9 +173,30 @@ $("#deny")?.addEventListener("click", async () => {
 $("#paste")?.addEventListener("click", async () => {
   try { $("#token").value = (await navigator.clipboard.readText()).trim(); } catch { alert("Paste manually"); }
 });
+async function ensureMobileSession() {
+  if (mobileJwt) return true;
+  const nick = `anon-${Math.random().toString(36).slice(2,6)}`;
+  const tmpId = `u_${Math.random().toString(36).slice(2,10)}_${Date.now().toString(36)}`;
+  const res = await fetch(api2("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: tmpId, displayName: nick }) });
+  const data = await res.json().catch(() => ({}));
+  if (data.token) { mobileJwt = data.token; mobileDisplay = nick; if (loginOut) loginOut.textContent = `Joined as ${nick} — ephemeral`; return true; }
+  return false;
+}
 try {
   const p = new URL(location.href).searchParams.get("token");
-  if (p) { $("#token").value = p; e2eKeyM = await deriveE2EKeyM(p); privateRoomM = `dm_${p.slice(0,12)}`; }
+  if (p) {
+    $("#token").value = p;
+    e2eKeyM = await deriveE2EKeyM(p);
+    privateRoomM = `dm_${p.slice(0,12)}`;
+    // Hide token from address bar immediately (privacy) — keep it only in memory
+    history.replaceState(null, "", location.pathname);
+    // Auto-start chatting once scanned — no token visible, no extra taps beyond ack
+    await ensureMobileSession();
+    await doPreview(p);
+    // Hide nickname card when coming from QR to keep it minimal
+    const nickCard = document.querySelector(".card");
+    if (nickCard && p) nickCard.style.display = "none";
+  }
 } catch {}
 // Refresh erases: no restore from storage — always start fresh
 
