@@ -7,410 +7,157 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
   <style>
     :root{
-      --void:#0A0A0B;
-      --soot:#101014;
-      --soot-2:#131318;
-      --raised:#1C1D23;
-      --raised-2:#26272E;
-      --line:rgba(255,255,255,.08);
-      --line-2:rgba(255,255,255,.12);
-      --txt:#ECECED;
-      --mut:#9A9AA3;
-      --dim:#6B6B74;
-      --aura:#7AA2FF;
-      --amber:#FFB224;
-      --danger:#F4212E;
-      --ok:#34D399;
-      --r:14px;
+      --void:#0A0A0B; --soot:#101014; --card:#131318; --raised:#1C1D23; --raised-2:#26272E;
+      --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.13);
+      --txt:#ECECED; --mut:#9A9AA3; --dim:#6B6B74; --aura:#7AA2FF;
     }
     *{box-sizing:border-box}
     html,body{height:100%}
-    body{
-      margin:0; background:var(--void); color:var(--txt);
-      font-family:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
-      -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
-      font-size:15px; line-height:1.55; overflow:hidden;
-    }
-    body::before{
-      content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
-      background:radial-gradient(900px 320px at 50% -80px, rgba(122,162,255,.07), transparent 70%);
-    }
-    button{font:inherit; color:inherit}
-    :focus-visible{outline:2px solid var(--aura); outline-offset:2px; border-radius:8px}
+    body{margin:0; background:var(--void); color:var(--txt); font-family:"Inter",system-ui,sans-serif; font-size:15px; line-height:1.55; overflow:hidden; -webkit-font-smoothing:antialiased}
+    :focus-visible{outline:2px solid var(--aura); outline-offset:2px}
     .mono{font-family:"JetBrains Mono",monospace}
-
-    .app{position:relative; z-index:1; display:grid; grid-template-columns:264px 1fr; height:100dvh}
-
-    /* ---- sidebar (Grok component: navigation + timeline) ---- */
-    .side{
-      background:var(--soot); border-right:1px solid var(--line);
-      display:flex; flex-direction:column; min-height:0;
-    }
-    .side-top{padding:14px 12px 10px; display:flex; flex-direction:column; gap:10px}
-    .logo-row{display:flex; align-items:center; gap:10px; padding:2px 6px}
-    .mark{
-      width:30px; height:30px; border-radius:50%; background:#fff; color:#000;
-      display:grid; place-items:center; font-weight:700; font-size:16px; flex:0 0 auto;
-      font-family:"Inter Tight",sans-serif;
-    }
-    .logo-row b{font-family:"Inter Tight",sans-serif; font-weight:600; font-size:14px; letter-spacing:-.01em}
-    .logo-row span{display:block; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut); letter-spacing:.04em}
-    .icon-btn{
-      appearance:none; border:1px solid transparent; background:transparent; cursor:pointer;
-      width:30px; height:30px; border-radius:8px; display:grid; place-items:center; color:var(--mut);
-    }
-    .icon-btn:hover{background:var(--raised); color:var(--txt)}
-    .new-btn{
-      appearance:none; border:1px solid var(--line); background:transparent; color:var(--txt);
-      border-radius:10px; padding:9px 12px; font-size:13.5px; font-weight:500; cursor:pointer;
-      display:flex; align-items:center; gap:8px; width:100%;
-    }
-    .new-btn:hover{background:var(--raised); border-color:var(--line-2)}
-    .search{
-      display:flex; align-items:center; gap:8px; background:var(--void);
-      border:1px solid var(--line); border-radius:10px; padding:8px 10px; color:var(--dim);
-    }
-    .search input{background:transparent; border:0; outline:0; color:var(--txt); font-size:13px; width:100%}
-    .search input::placeholder{color:var(--dim)}
-    .side-scroll{flex:1; overflow:auto; padding:4px 12px 12px; display:flex; flex-direction:column; gap:14px}
-    .side-label{font-size:11.5px; font-weight:600; color:var(--dim); padding:6px 6px 4px; letter-spacing:.01em}
-    .room{
-      appearance:none; width:100%; text-align:left; cursor:pointer;
-      border:1px solid transparent; background:transparent; color:var(--mut);
-      border-radius:10px; padding:8px 10px; font-size:13.5px; display:flex; align-items:center; gap:9px;
-    }
+    .app{display:grid; grid-template-columns:240px 1fr; height:100dvh}
+    /* sidebar — rooms + identity only */
+    .side{background:var(--soot); border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0}
+    .side-top{padding:14px 12px 6px; display:flex; flex-direction:column; gap:10px}
+    .logo{display:flex; align-items:center; gap:10px; padding:2px 6px}
+    .mark{width:30px; height:30px; border-radius:50%; background:#fff; color:#000; display:grid; place-items:center; font-weight:700; font-size:15px; font-family:"Inter Tight",sans-serif}
+    .logo b{font-family:"Inter Tight",sans-serif; font-size:14px; font-weight:600}
+    .new-btn{border:1px solid var(--line); background:transparent; color:var(--txt); border-radius:10px; padding:9px 12px; font-size:13.5px; font-weight:500; cursor:pointer; display:flex; gap:8px; align-items:center; width:100%}
+    .new-btn:hover{background:var(--raised)}
+    .side-scroll{flex:1; overflow:auto; padding:6px 12px}
+    .side-label{font-size:11.5px; font-weight:600; color:var(--dim); padding:8px 6px 4px}
+    .room{width:100%; text-align:left; border:0; background:transparent; color:var(--mut); border-radius:10px; padding:8px 10px; font-size:13.5px; cursor:pointer; display:flex; gap:9px; align-items:center}
     .room:hover{background:var(--raised); color:var(--txt)}
-    .room.active{background:var(--raised-2); color:var(--txt); border-color:var(--line)}
-    .room .hash{color:var(--dim); font-weight:500}
-    .room.active .hash{color:var(--txt)}
-    .room .unread{margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:10.5px; background:#fff; color:#000; border-radius:99px; padding:1px 7px}
-    .hist-row{
-      display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:8px;
-      font-size:13px; color:var(--mut); cursor:default; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-    }
+    .room.active{background:var(--raised-2); color:var(--txt)}
+    .room .hash{color:var(--dim)}
     .side-foot{border-top:1px solid var(--line); padding:12px}
-    .user-card{
-      display:flex; align-items:center; gap:10px; background:var(--void);
-      border:1px solid var(--line); border-radius:12px; padding:9px 10px;
-    }
-    .avatar{
-      width:30px; height:30px; border-radius:50%; flex:0 0 auto;
-      background:linear-gradient(135deg,#2A2C35,#17181D); border:1px solid var(--line-2);
-      display:grid; place-items:center; font-size:12px; font-weight:600;
-    }
-    .user-card .who{min-width:0; flex:1}
-    .user-card .who b{display:block; font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-    .user-card .who span{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut)}
-    .dot{width:7px; height:7px; border-radius:50%; background:var(--dim); flex:0 0 auto}
-    .dot.on{background:var(--ok); box-shadow:0 0 0 4px rgba(52,211,153,.15)}
-    .link-btn{
-      appearance:none; cursor:pointer; border-radius:8px; border:1px solid var(--line);
-      background:transparent; color:var(--txt); font-size:12px; font-weight:500; padding:6px 10px;
-    }
+    .user-card{display:flex; align-items:center; gap:10px; background:var(--void); border:1px solid var(--line); border-radius:12px; padding:9px 10px}
+    .avatar{width:30px; height:30px; border-radius:50%; background:#1E1F26; border:1px solid var(--line-2); display:grid; place-items:center; font-size:12px; font-weight:600; flex:0 0 auto}
+    .who{flex:1; min-width:0}
+    .who b{display:block; font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+    .who span{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut)}
+    .link-btn{border:1px solid var(--line); background:transparent; color:var(--txt); border-radius:8px; font-size:12px; padding:6px 10px; cursor:pointer}
     .link-btn:hover{background:var(--raised)}
-
-    /* ---- main ---- */
-    .main{display:flex; flex-direction:column; min-width:0; min-height:0; background:transparent}
-    .topbar{
-      height:56px; flex:0 0 auto; display:flex; align-items:center; gap:10px;
-      padding:0 20px; border-bottom:1px solid var(--line);
-      background:rgba(10,10,11,.72); backdrop-filter:blur(12px);
-    }
+    /* main */
+    .main{display:flex; flex-direction:column; min-width:0; min-height:0}
+    .topbar{height:56px; flex:0 0 auto; display:flex; align-items:center; gap:10px; padding:0 20px; border-bottom:1px solid var(--line); background:rgba(10,10,11,.72); backdrop-filter:blur(12px)}
+    .icon-btn{border:0; background:transparent; color:var(--mut); width:30px; height:30px; border-radius:8px; cursor:pointer; display:grid; place-items:center}
+    .icon-btn:hover{background:var(--raised); color:var(--txt)}
     .menu-btn{display:none}
-    .room-pill{
-      display:flex; align-items:center; gap:8px; font-weight:600; font-size:14px;
-      font-family:"Inter Tight",sans-serif; letter-spacing:-.01em;
-    }
-    .secure-badge{
-      display:inline-flex; align-items:center; gap:6px;
-      font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut);
-      border:1px solid var(--line); border-radius:99px; padding:3px 9px; background:var(--soot);
-    }
-    .secure-badge i{width:6px; height:6px; border-radius:50%; background:var(--ok)}
-    .secure-badge.off i{background:var(--amber)}
-    .top-actions{margin-left:auto; display:flex; align-items:center; gap:6px}
-    .tool-btn{
-      appearance:none; border:1px solid transparent; background:transparent; color:var(--mut);
-      border-radius:9px; padding:7px 10px; font-size:12.5px; cursor:pointer; display:inline-flex; align-items:center; gap:7px;
-    }
-    .tool-btn:hover{background:var(--raised); color:var(--txt)}
-    .tool-btn.primary{border-color:var(--line); color:var(--txt); background:var(--soot-2)}
-
-    .scroll{flex:1; overflow:auto; min-height:0}
-    .col{max-width:780px; margin:0 auto; padding:0 24px; width:100%}
-
-    /* hero = thesis: the question + link CTA (Grok empty state, Claude warmth in copy) */
-    .hero{padding:64px 0 8px; text-align:left}
-    .hero .eyebrow{
-      display:inline-flex; align-items:center; gap:8px;
-      font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--mut);
-      border:1px solid var(--line); background:var(--soot); border-radius:99px; padding:5px 11px;
-    }
-    .hero .eyebrow i{width:6px; height:6px; border-radius:50%; background:var(--amber)}
-    .hero h1{
-      margin:18px 0 10px; font-family:"Inter Tight",sans-serif; font-weight:600;
-      font-size:clamp(30px,4.4vw,44px); letter-spacing:-.045em; line-height:1.02;
-    }
+    .room-pill{font-family:"Inter Tight",sans-serif; font-weight:600; font-size:14px}
+    .room-pill span{color:var(--dim)}
+    .top-actions{margin-left:auto}
+    .primary-btn{border:0; background:#fff; color:#000; font-weight:600; font-size:13.5px; border-radius:11px; padding:9px 15px; cursor:pointer}
+    .primary-btn:hover{background:#E4E4E4}
+    .scroll{flex:1; overflow:auto}
+    .col{max-width:760px; margin:0 auto; padding:0 24px; width:100%}
+    .hero{padding:72px 0 8px}
+    .hero h1{margin:0 0 10px; font-family:"Inter Tight",sans-serif; font-weight:600; font-size:clamp(30px,4.4vw,42px); letter-spacing:-.045em; line-height:1.04}
     .hero h1 em{font-style:normal; color:var(--mut); font-weight:500}
-    .hero p{margin:0 0 20px; color:var(--mut); font-size:14.5px; max-width:60ch}
-    .hero p b{color:var(--txt); font-weight:500}
-    .chips{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:22px}
-    .chip{
-      appearance:none; cursor:pointer; border:1px solid var(--line); background:var(--soot);
-      color:var(--txt); border-radius:12px; padding:10px 13px; font-size:13px; text-align:left;
-      max-width:240px;
-    }
-    .chip:hover{background:var(--raised); border-color:var(--line-2)}
-    .chip small{display:block; color:var(--mut); font-size:12px; margin-top:2px}
-    .link-cta{
-      display:flex; align-items:center; gap:14px; border:1px solid var(--line);
-      background:var(--soot); border-radius:16px; padding:14px 16px;
-    }
-    .link-cta .copy{flex:1; min-width:0}
-    .link-cta .copy b{display:block; font-size:14px; font-weight:600; letter-spacing:-.01em}
-    .link-cta .copy span{font-size:13px; color:var(--mut)}
-    .cta-btn{
-      appearance:none; border:0; cursor:pointer; background:#fff; color:#000;
-      font-weight:600; font-size:13.5px; border-radius:11px; padding:11px 16px; flex:0 0 auto;
-    }
-    .cta-btn:hover{background:#E7E7E7}
-    .ghost-btn{
-      appearance:none; cursor:pointer; background:transparent; color:var(--mut);
-      border:1px solid var(--line); border-radius:11px; padding:11px 14px; font-size:13px;
-    }
-    .ghost-btn:hover{color:var(--txt); background:var(--raised)}
-
-    /* transcript rows (Grok messaging component) */
+    .hero p{margin:0 0 22px; color:var(--mut); font-size:14.5px}
     #msgs{display:flex; flex-direction:column; gap:2px; padding:26px 0 18px}
-    .sys{
-      text-align:center; color:var(--dim); font-size:12.5px; padding:10px;
-      font-family:"JetBrains Mono",monospace; font-size:11px;
-    }
-    .row{display:flex; gap:12px; padding:12px 8px; border-radius:14px}
+    .sys{text-align:center; color:var(--dim); font-family:"JetBrains Mono",monospace; font-size:11px; padding:10px}
+    .row{display:flex; gap:12px; padding:11px 8px; border-radius:14px}
     .row:hover{background:rgba(255,255,255,.02)}
-    .row .ava{
-      width:30px; height:30px; border-radius:50%; flex:0 0 auto; display:grid; place-items:center;
-      font-size:12px; font-weight:600; background:var(--raised-2); border:1px solid var(--line);
-    }
+    .row .ava{width:30px; height:30px; border-radius:50%; flex:0 0 auto; display:grid; place-items:center; font-size:12px; font-weight:600; background:var(--raised-2); border:1px solid var(--line)}
     .row.me{flex-direction:row-reverse}
     .row.me .ava{display:none}
-    .bubble{max-width:min(78%,560px); min-width:0}
-    .row.me .bubble{
-      background:var(--raised-2); border:1px solid var(--line);
-      border-radius:18px 18px 5px 18px; padding:10px 14px; margin-left:auto;
-    }
-    .row.peer .bubble{padding:2px 0}
-    .meta{display:flex; align-items:baseline; gap:8px; margin-bottom:3px}
-    .meta b{font-size:13px; font-weight:600}
+    .bubble{max-width:min(78%,560px)}
+    .row.me .bubble{background:var(--raised-2); border:1px solid var(--line); border-radius:18px 18px 5px 18px; padding:10px 14px; margin-left:auto}
+    .meta{display:flex; gap:8px; align-items:baseline; margin-bottom:2px}
+    .meta b{font-size:13px}
     .meta time{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--dim)}
-    .flag{
-      font-family:"JetBrains Mono",monospace; font-size:10px; color:var(--amber);
-      border:1px solid rgba(255,178,36,.3); border-radius:99px; padding:1px 7px;
-    }
-    .body{font-size:14.5px; line-height:1.6; word-break:break-word; white-space:pre-wrap}
-    .row.me .body{font-size:14px}
-    .presence{
-      display:none; align-items:center; gap:8px; margin:0 auto 6px; width:fit-content;
-      font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--mut);
-      border:1px solid var(--line); background:var(--soot); border-radius:99px; padding:5px 12px;
-    }
-
-    /* composer (Grok input component) */
-    .composer-zone{flex:0 0 auto; padding:6px 0 10px; background:linear-gradient(180deg, transparent, var(--void) 28%)}
-    .composer{
-      border:1px solid var(--line-2); background:var(--soot-2); border-radius:26px;
-      box-shadow:0 12px 40px rgba(0,0,0,.5); overflow:hidden;
-    }
+    .body{font-size:14.5px; line-height:1.6; white-space:pre-wrap; word-break:break-word}
+    .presence{display:none; width:fit-content; margin:0 auto 6px; font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--mut); border:1px solid var(--line); background:var(--soot); border-radius:99px; padding:5px 12px}
+    .composer-zone{flex:0 0 auto; padding:6px 0 10px; background:linear-gradient(180deg, transparent, var(--void) 30%)}
+    .composer{border:1px solid var(--line-2); background:var(--card); border-radius:26px; box-shadow:0 12px 40px rgba(0,0,0,.5)}
     .composer:focus-within{border-color:rgba(122,162,255,.45)}
-    #msgInput{
-      width:100%; background:transparent; border:0; outline:0; resize:none;
-      color:var(--txt); font:inherit; font-size:14.5px; line-height:1.55;
-      padding:15px 18px 4px; max-height:160px; display:block;
-    }
+    #msgInput{width:100%; background:transparent; border:0; outline:0; resize:none; color:var(--txt); font:inherit; font-size:14.5px; padding:15px 18px 14px; max-height:160px; display:block}
     #msgInput::placeholder{color:var(--dim)}
-    .composer-bar{display:flex; align-items:center; gap:6px; padding:8px 10px 10px 12px}
-    .pill-btn{
-      appearance:none; cursor:pointer; border:1px solid var(--line); background:transparent; color:var(--mut);
-      border-radius:99px; padding:7px 11px; font-size:12.5px; display:inline-flex; align-items:center; gap:7px;
-    }
-    .pill-btn:hover{color:var(--txt); background:var(--raised)}
-    .pill-btn[aria-pressed="true"]{color:var(--txt); border-color:rgba(122,162,255,.5); background:rgba(122,162,255,.12)}
+    .composer-bar{display:flex; align-items:center; padding:0 10px 10px 18px}
+    .hint{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--dim)}
     .spacer{flex:1}
-    .send{
-      appearance:none; border:0; cursor:pointer; width:34px; height:34px; border-radius:50%;
-      background:#fff; color:#000; display:grid; place-items:center; flex:0 0 auto;
-    }
+    .send{border:0; width:34px; height:34px; border-radius:50%; background:#fff; color:#000; display:grid; place-items:center; cursor:pointer}
     .send:disabled{background:var(--raised-2); color:var(--dim); cursor:not-allowed}
-    .send:not(:disabled):hover{background:#E4E4E4}
-    .foot{
-      display:flex; align-items:center; justify-content:center; gap:8px;
-      font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--dim); padding:8px 0 14px;
-    }
-    #debug{
-      display:none; margin:0 0 12px; background:#000; border:1px solid var(--line); border-radius:12px;
-      padding:12px 14px; font-family:"JetBrains Mono",monospace; font-size:11px; color:#B9B9C2;
-      max-height:130px; overflow:auto; white-space:pre-wrap; word-break:break-word;
-    }
-    #debug.open{display:block}
-
-    /* QR verify modal (Grok modal + MFA/verification components) — the signature */
-    .backdrop{
-      position:fixed; inset:0; z-index:50; display:none;
-      background:rgba(4,4,6,.62); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
-      align-items:center; justify-content:center; padding:20px;
-    }
+    .foot{text-align:center; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--dim); padding:8px 0 14px}
+    #debug{display:none; margin:0 0 12px; background:#000; border:1px solid var(--line); border-radius:12px; padding:12px; font-family:"JetBrains Mono",monospace; font-size:11px; color:#B9B9C2; max-height:120px; overflow:auto; white-space:pre-wrap}
+    /* modal — ticket only */
+    .backdrop{position:fixed; inset:0; z-index:50; display:none; background:rgba(4,4,6,.62); backdrop-filter:blur(14px); align-items:center; justify-content:center; padding:20px}
     .backdrop.open{display:flex}
-    .sheet{
-      width:min(460px,100%); background:var(--soot-2); border:1px solid var(--line-2);
-      border-radius:20px; box-shadow:0 32px 90px rgba(0,0,0,.6); overflow:hidden;
-      animation:rise 220ms ease;
-    }
-    @keyframes rise{from{transform:translateY(10px) scale(.985); opacity:0} to{transform:none; opacity:1}}
-    .sheet-head{padding:18px 20px 0; display:flex; align-items:flex-start; gap:12px}
-    .sheet-head .t{flex:1}
+    .sheet{width:min(420px,100%); background:var(--card); border:1px solid var(--line-2); border-radius:20px; box-shadow:0 32px 90px rgba(0,0,0,.6); overflow:hidden}
+    .sheet-head{padding:18px 20px 0; display:flex; gap:12px; align-items:flex-start}
     .sheet-head h2{margin:0; font-family:"Inter Tight",sans-serif; font-size:17px; font-weight:600; letter-spacing:-.02em}
     .sheet-head p{margin:5px 0 0; font-size:13px; color:var(--mut)}
-    .steps{display:flex; gap:6px; padding:14px 20px 0}
-    .steps span{height:3px; flex:1; border-radius:99px; background:var(--raised-2)}
-    .steps span.done{background:#fff}
     .qr-stage{margin:16px 20px 0; background:#fff; border-radius:16px; padding:16px; display:grid; place-items:center; min-height:248px}
     #qr{display:grid; place-items:center; min-height:216px}
-    #qr canvas{border-radius:8px; display:block}
-    #qr .empty{color:#6B6B74; font-size:13px; text-align:center; font-family:"JetBrains Mono",monospace; font-size:11.5px}
-    .verify-row{
-      margin:14px 20px 0; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:var(--void);
-    }
-    .verify-row .vr-head{
-      display:flex; align-items:center; gap:10px; padding:11px 14px; border-bottom:1px solid var(--line);
-    }
+    #qr canvas, #qr svg, #qr img{border-radius:8px; display:block}
+    #qr svg{width:216px; height:216px}
+    #qr .empty{color:#6B6B74; font-family:"JetBrains Mono",monospace; font-size:11.5px; text-align:center}
+    .verify{display:flex; align-items:center; gap:12px; margin:14px 20px 0; border:1px solid var(--line); border-radius:14px; padding:11px 14px; background:var(--void)}
     .ring{position:relative; width:36px; height:36px; flex:0 0 auto}
     .ring svg{transform:rotate(-90deg)}
-    .ring b{
-      position:absolute; inset:0; display:grid; place-items:center;
-      font-family:"JetBrains Mono",monospace; font-size:10px; font-weight:500;
-    }
-    .verify-row .vr-head .tt b{display:block; font-size:13px}
-    .verify-row .vr-head .tt span{font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--mut)}
-    #status{
-      margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:10.5px;
-      border:1px solid var(--line); border-radius:99px; padding:4px 10px; color:var(--mut); white-space:nowrap;
-    }
-    #status.ok{color:var(--ok); border-color:rgba(52,211,153,.35)}
-    #status.bad{color:#FF8585; border-color:rgba(244,33,46,.4)}
-    #status.warn{color:var(--amber); border-color:rgba(255,178,36,.4)}
-    .kv{display:grid; grid-template-columns:110px 1fr; font-size:12.5px}
-    .kv div{padding:9px 14px; border-bottom:1px solid var(--line)}
-    .kv div:nth-child(odd){color:var(--dim); font-family:"JetBrains Mono",monospace; font-size:11px}
-    .kv div:nth-child(even){overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+    .ring b{position:absolute; inset:0; display:grid; place-items:center; font-family:"JetBrains Mono",monospace; font-size:10px}
+    .verify .tt{flex:1; min-width:0}
+    .verify .tt b{display:block; font-size:13px}
+    .verify .tt span{font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--mut)}
+    #status{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut); border:1px solid var(--line); border-radius:99px; padding:4px 10px; white-space:nowrap}
     #linkWrap{display:none; margin:12px 20px 0; border:1px dashed var(--line-2); border-radius:12px; padding:10px 12px}
-    #link{font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--txt); word-break:break-all}
+    #link{font-family:"JetBrains Mono",monospace; font-size:11px; word-break:break-all}
     .sheet-actions{display:flex; gap:8px; padding:16px 20px 20px}
-    .btn-primary{
-      appearance:none; border:0; cursor:pointer; flex:1; background:#fff; color:#000;
-      font-weight:600; font-size:14px; border-radius:12px; padding:12px;
-    }
-    .btn-primary:hover{background:#E6E6E6}
-    .btn-quiet{
-      appearance:none; cursor:pointer; background:transparent; color:var(--txt);
-      border:1px solid var(--line-2); border-radius:12px; padding:12px 14px; font-size:13.5px; font-weight:500;
-    }
-    .btn-quiet:hover{background:var(--raised)}
+    .btn-primary{flex:1; border:0; background:#fff; color:#000; font-weight:600; font-size:14px; border-radius:12px; padding:12px; cursor:pointer}
+    .btn-quiet{background:transparent; color:var(--txt); border:1px solid var(--line-2); border-radius:12px; padding:12px 14px; font-size:13.5px; cursor:pointer}
     .toast-stack{position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:60; display:flex; flex-direction:column; gap:8px; align-items:center}
-    .toast{
-      background:var(--raised-2); border:1px solid var(--line-2); color:var(--txt);
-      border-radius:12px; padding:10px 14px; font-size:13px; box-shadow:0 12px 32px rgba(0,0,0,.5);
-      animation:rise 180ms ease;
-    }
-
+    .toast{background:var(--raised-2); border:1px solid var(--line-2); border-radius:12px; padding:10px 14px; font-size:13px}
     @media (max-width:920px){
       .app{grid-template-columns:1fr}
-      .side{position:fixed; z-index:40; inset:0 auto 0 0; width:280px; transform:translateX(-102%); transition:transform 200ms ease}
-      .side.open{transform:none; box-shadow:30px 0 80px rgba(0,0,0,.5)}
+      .side{position:fixed; z-index:40; inset:0 auto 0 0; width:272px; transform:translateX(-102%); transition:transform 200ms ease}
+      .side.open{transform:none}
       .menu-btn{display:grid}
-      .hero{padding-top:40px}
+      .hero{padding-top:44px}
     }
-    @media (prefers-reduced-motion: reduce){
-      *{animation:none !important; transition:none !important}
-    }
+    @media (prefers-reduced-motion: reduce){*{animation:none !important; transition:none !important}}
   </style>
 </head>
 <body>
   <div class="app">
-    <!-- ============ SIDEBAR ============ -->
     <aside class="side" id="sidebar" aria-label="Rooms and session">
       <div class="side-top">
-        <div class="logo-row">
-          <div class="mark">✕</div>
-          <div style="flex:1"><b>Secure Chat</b><span>ephemeral · burned on claim</span></div>
-          <button class="icon-btn" id="collapseBtn" title="Close sidebar" aria-label="Close sidebar">⨯</button>
-        </div>
+        <div class="logo"><div class="mark">✕</div><b>Secure Chat</b></div>
         <button class="new-btn" id="newChatBtn">✎&nbsp; New chat</button>
-        <label class="search"><span aria-hidden="true">⌕</span><input id="searchInput" placeholder="Search conversation" autocomplete="off" /></label>
       </div>
       <div class="side-scroll">
-        <div>
-          <div class="side-label">Rooms</div>
-          <button class="room active" data-room="general"><span class="hash">#</span> general <span class="unread" id="unreadGeneral" style="display:none">0</span></button>
-          <button class="room" data-room="engineering"><span class="hash">#</span> engineering</button>
-          <button class="room" data-room="random"><span class="hash">#</span> random</button>
-        </div>
-        <div>
-          <div class="side-label">Session</div>
-          <div class="hist-row" id="sessionRow">○&nbsp; Not linked — ticket required</div>
-          <div class="hist-row mono" id="rateRow" style="font-size:11px">Rate 20 / 10s · WSS only · no-store</div>
-        </div>
-        <div>
-          <div class="side-label">Security</div>
-          <div class="hist-row">SHA-256 at rest · 256-bit opaque</div>
-          <div class="hist-row">Burned on claim · no replay</div>
-          <div class="hist-row"><a href="/mobile" style="color:var(--aura); text-decoration:none">Open mobile key →</a></div>
-        </div>
+        <div class="side-label">Rooms</div>
+        <button class="room active" data-room="general"><span class="hash">#</span> general</button>
+        <button class="room" data-room="engineering"><span class="hash">#</span> engineering</button>
+        <button class="room" data-room="random"><span class="hash">#</span> random</button>
       </div>
       <div class="side-foot">
         <div class="user-card">
           <div class="avatar" id="avatar">?</div>
-          <div class="who"><b id="me">Not linked</b><span id="meSub">generate a ticket to start</span></div>
-          <span class="dot" id="presenceDot" title="connection"></span>
+          <div class="who"><b id="me">Not linked</b><span id="meSub">ticket required</span></div>
           <button class="link-btn" id="linkDeviceBtn">Link</button>
         </div>
       </div>
     </aside>
 
-    <!-- ============ MAIN ============ -->
     <main class="main">
       <header class="topbar">
         <button class="icon-btn menu-btn" id="menuBtn" aria-label="Open sidebar">☰</button>
-        <div class="room-pill"><span style="color:var(--dim)">#</span> <span id="roomName">general</span></div>
-        <span class="secure-badge off" id="secureBadge"><i></i> <span id="secureText">unlinked</span></span>
-        <div class="top-actions">
-          <button class="tool-btn" id="historyBtn" title="Load history">↻ History</button>
-          <button class="tool-btn" id="exportBtn" title="Copy transcript">⧉ Copy</button>
-          <button class="tool-btn" id="debugToggle" title="Toggle log">›_ Log</button>
-          <button class="tool-btn primary" id="openQrBtn">Link device</button>
-        </div>
+        <div class="room-pill"><span>#</span> <span id="roomName">general</span></div>
+        <div class="top-actions"><button class="primary-btn" id="openQrBtn">Link device</button></div>
       </header>
 
       <div class="scroll" id="scroll">
         <div class="col">
           <section class="hero" id="hero">
-            <span class="eyebrow"><i></i> Ticket burns in 90s · single-use · no replay</span>
             <h1>What should we<br>talk about<em> — securely?</em></h1>
-            <p>Link this device with your phone, then every message is <b>escaped server-side</b>, <b>moderated before broadcast</b>, and stored under a room you provably joined. Nothing to steal, nothing to replay.</p>
-            <div class="chips" id="chips">
-              <button class="chip" data-prompt="Summarize the threat model of this QR login in two lines.">Explain the QR login<small>How the 90-second ticket works</small></button>
-              <button class="chip" data-prompt="Hello #general — testing my secure link. Can anyone read this?">Say hello securely<small>First message in #general</small></button>
-              <button class="chip" data-prompt="What happens if someone photographs my QR code?">What if my QR leaks?<small>Replay, expiry and burn</small></button>
-            </div>
-            <div class="link-cta">
-              <div class="copy"><b>Link this device to start</b><span>Scan with your authenticated phone → approve → ticket burns → 1-hour pass.</span></div>
-              <button class="ghost-btn" id="howBtn">How it works</button>
-              <button class="cta-btn" id="heroLinkBtn">Generate link</button>
-            </div>
+            <p>Link this device to start. The ticket burns in 90 seconds.</p>
+            <button class="primary-btn" id="heroLinkBtn" style="padding:12px 18px">Generate link</button>
           </section>
-
           <div class="presence" id="presence"></div>
           <div id="msgs" role="log" aria-live="polite" aria-relevant="additions"></div>
         </div>
@@ -420,61 +167,45 @@
         <div class="col">
           <pre id="debug" aria-label="Debug log"></pre>
           <div class="composer">
-            <textarea id="msgInput" rows="1" placeholder="Message #general — Enter to send, Shift+Enter for a new line" maxlength="2000" autocomplete="off"></textarea>
+            <textarea id="msgInput" rows="1" placeholder="Message #general" maxlength="2000" autocomplete="off"></textarea>
             <div class="composer-bar">
-              <button class="pill-btn" id="attachBtn" title="Attachments are disabled in this build">＋</button>
-              <button class="pill-btn" id="thinkBtn" aria-pressed="false" title="Toggle verbose security log">◍&nbsp; Verbose</button>
-              <button class="pill-btn" id="clearBtn" title="Clear transcript">✕&nbsp; Clear</button>
+              <span class="hint">Enter to send</span>
               <span class="spacer"></span>
-              <span class="mono" id="timerText" style="font-size:10.5px; color:var(--dim)">No active ticket</span>
               <button class="send" id="send" aria-label="Send message" disabled>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
             </div>
           </div>
-          <div class="foot"><span>Escaped server-side · moderated before broadcast · 20 / 10s · WSS only</span></div>
+          <div class="foot">Secure · WSS · burns on claim</div>
         </div>
       </div>
     </main>
   </div>
 
-  <!-- ============ QR VERIFY MODAL ============ -->
   <div class="backdrop" id="qrModal" role="dialog" aria-modal="true" aria-labelledby="qrTitle">
     <div class="sheet">
       <div class="sheet-head">
-        <div class="t">
-          <h2 id="qrTitle">Link this device</h2>
-          <p>Scan with your authenticated phone. The ticket burns the moment you claim it.</p>
-        </div>
+        <div style="flex:1"><h2 id="qrTitle">Link this device</h2><p>Scan with your phone to approve.</p></div>
         <button class="icon-btn" id="qrClose" aria-label="Close">⨯</button>
       </div>
-      <div class="steps" aria-hidden="true"><span class="done" id="step1"></span><span id="step2"></span><span id="step3"></span></div>
-      <div class="qr-stage"><div id="qr"><div class="empty">Press Generate — ticket lives 90s.</div></div></div>
-      <div class="verify-row">
-        <div class="vr-head">
-          <div class="ring" aria-hidden="true">
-            <svg width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.5" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="3"/><circle id="ringFg" cx="18" cy="18" r="15.5" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-dasharray="97.4" stroke-dashoffset="0"/></svg>
-            <b id="ringNum">90</b>
-          </div>
-          <div class="tt"><b>Waiting for approval</b><span class="mono" id="ringSub">opaque · SHA-256 at rest · 256-bit</span></div>
-          <span id="status">Idle</span>
+      <div class="qr-stage"><div id="qr"><div class="empty">Press Generate — lives 90s.</div></div></div>
+      <div class="verify">
+        <div class="ring" aria-hidden="true">
+          <svg width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.5" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="3"/><circle id="ringFg" cx="18" cy="18" r="15.5" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-dasharray="97.4" stroke-dashoffset="0"/></svg>
+          <b id="ringNum">–</b>
         </div>
-        <div class="kv mono">
-          <div>room</div><div id="kvRoom">#general</div>
-          <div>transport</div><div>WSS only · no-store · HSTS</div>
-          <div>rate</div><div>5 tickets / min / IP</div>
-        </div>
+        <div class="tt"><b>Waiting for approval</b><span class="mono" id="timerText">No active ticket</span></div>
+        <span id="status">Idle</span>
       </div>
-      <div id="linkWrap"><div class="mono" style="font-size:10.5px; color:var(--mut); margin-bottom:5px">Copy link (testing only — treat as secret):</div><code id="link"></code></div>
+      <div id="linkWrap"><code id="link"></code></div>
       <div class="sheet-actions">
-        <button class="btn-quiet" id="copyLinkBtn">Copy link</button>
+        <button class="btn-quiet" id="copyLinkBtn">Copy</button>
         <button class="btn-primary" id="gen">Generate link</button>
       </div>
     </div>
   </div>
 
   <div class="toast-stack" id="toasts" aria-live="polite"></div>
-
   <script type="module" src="/client/desktop.js"></script>
 </body>
 </html>

@@ -8,131 +8,72 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
-    :root{
-      --void:#0A0A0B; --soot:#101014; --card:#131318; --raised:#1C1D23;
-      --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.13);
-      --txt:#ECECED; --mut:#9A9AA3; --dim:#6B6B74;
-      --aura:#7AA2FF; --amber:#FFB224; --danger:#F4212E; --ok:#34D399;
-    }
+    :root{--void:#0A0A0B; --card:#131318; --raised:#1C1D23; --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.13); --txt:#ECECED; --mut:#9A9AA3; --dim:#6B6B74; --aura:#7AA2FF; --danger:#F4212E}
     *{box-sizing:border-box}
-    body{margin:0; background:var(--void); color:var(--txt); font-family:"Inter",system-ui,sans-serif; -webkit-font-smoothing:antialiased; font-size:15px; line-height:1.55}
-    body::before{content:""; position:fixed; inset:0; pointer-events:none; background:radial-gradient(700px 260px at 50% -60px, rgba(122,162,255,.08), transparent 70%)}
+    body{margin:0; background:var(--void); color:var(--txt); font-family:"Inter",system-ui,sans-serif; font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased}
     :focus-visible{outline:2px solid var(--aura); outline-offset:2px}
     .mono{font-family:"JetBrains Mono",monospace}
-    .top{position:sticky; top:0; z-index:10; background:rgba(10,10,11,.8); backdrop-filter:blur(12px); border-bottom:1px solid var(--line)}
-    .top-inner{max-width:560px; margin:0 auto; padding:13px 18px; display:flex; align-items:center; gap:12px}
-    .back{appearance:none; border:1px solid var(--line); background:transparent; color:var(--txt); width:32px; height:32px; border-radius:10px; cursor:pointer; text-decoration:none; display:grid; place-items:center; font-size:15px}
-    .top-inner b{font-family:"Inter Tight",sans-serif; font-size:14.5px; font-weight:600; letter-spacing:-.01em}
-    .top-inner span{display:block; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut)}
-    .live{margin-left:auto; display:inline-flex; align-items:center; gap:7px; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut); border:1px solid var(--line); border-radius:99px; padding:5px 11px; background:var(--soot)}
-    .live i{width:6px; height:6px; border-radius:50%; background:var(--ok)}
-    .wrap{position:relative; max-width:560px; margin:0 auto; padding:20px 18px 120px}
-    .hero{padding:14px 2px 4px}
-    .hero h1{margin:0; font-family:"Inter Tight",sans-serif; font-size:30px; font-weight:600; letter-spacing:-.04em; line-height:1.05}
-    .hero h1 em{font-style:normal; color:var(--mut); font-weight:500}
-    .hero p{margin:10px 0 0; color:var(--mut); font-size:13.5px}
-    .steps{display:flex; gap:6px; margin:16px 0 4px}
-    .steps span{height:3px; flex:1; border-radius:99px; background:var(--raised)}
-    .steps span.done{background:#fff}
+    .top{position:sticky; top:0; background:rgba(10,10,11,.8); backdrop-filter:blur(12px); border-bottom:1px solid var(--line)}
+    .top-inner{max-width:520px; margin:0 auto; padding:13px 18px; display:flex; align-items:center; gap:12px}
+    .back{border:1px solid var(--line); color:var(--txt); width:32px; height:32px; border-radius:10px; display:grid; place-items:center; text-decoration:none}
+    .top-inner b{font-family:"Inter Tight",sans-serif; font-size:14.5px}
+    .wrap{max-width:520px; margin:0 auto; padding:22px 18px 120px}
+    h1{margin:0; font-family:"Inter Tight",sans-serif; font-size:30px; font-weight:600; letter-spacing:-.04em; line-height:1.05}
+    h1 em{font-style:normal; color:var(--mut); font-weight:500}
+    .sub{margin:10px 0 0; color:var(--mut); font-size:13.5px}
     .card{background:var(--card); border:1px solid var(--line); border-radius:18px; padding:16px; margin:14px 0}
-    .card h2{margin:0 0 4px; font-size:14px; font-weight:600; letter-spacing:-.01em; font-family:"Inter Tight",sans-serif}
-    .card p{margin:0 0 12px; font-size:13px; color:var(--mut)}
-    label.lbl{display:block; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--dim); margin:10px 0 6px; letter-spacing:.03em}
-    .field{display:flex; gap:8px}
-    input[type=text]{flex:1; min-width:0; background:var(--void); border:1px solid var(--line); color:var(--txt); border-radius:12px; padding:12px 13px; font-size:14px; outline:none; width:100%}
+    .card h2{margin:0 0 10px; font-size:14px; font-family:"Inter Tight",sans-serif}
+    input[type=text]{width:100%; background:var(--void); border:1px solid var(--line); color:var(--txt); border-radius:12px; padding:12px 13px; font-size:14px; outline:none}
     input:focus{border-color:rgba(122,162,255,.5)}
     .row{display:flex; gap:8px; margin-top:10px}
-    .btn{appearance:none; border:0; border-radius:12px; padding:12px 14px; font-size:14px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:8px}
+    .btn{border:0; border-radius:12px; padding:12px 14px; font-size:14px; font-weight:600; cursor:pointer}
     .btn-primary{background:#fff; color:#000; flex:1}
-    .btn-primary:hover{background:#E6E6E6}
-    .btn-primary:disabled{opacity:.4}
     .btn-quiet{background:transparent; color:var(--txt); border:1px solid var(--line-2); font-weight:500}
     .btn-danger{background:var(--danger); color:#fff; flex:1}
-    pre{background:#000; border:1px solid var(--line); color:#B9B9C2; border-radius:12px; padding:12px; overflow:auto; font-family:"JetBrains Mono",monospace; font-size:11px; white-space:pre-wrap; word-break:break-word; margin:12px 0 0}
-    .sheet{border:1px solid rgba(255,178,36,.3); background:rgba(255,178,36,.05); border-radius:16px; padding:14px; margin-top:12px}
-    #confirm{display:none}
+    .btn:disabled{opacity:.4}
+    .note{font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--mut); margin:10px 0 0; white-space:pre-wrap}
+    #confirm{display:none; border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:14px; margin-top:12px}
     #confirm.open{display:block}
-    #confirm h3{margin:0; font-family:"Inter Tight",sans-serif; font-size:15px; display:flex; align-items:center; gap:8px}
-    #confirm h3 .pill{margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:10px; color:var(--amber); border:1px solid rgba(255,178,36,.35); padding:3px 9px; border-radius:99px; font-weight:400}
-    .fp{margin:12px 0 0; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--void)}
-    .fp-head{display:flex; align-items:center; gap:8px; padding:10px 13px; border-bottom:1px solid var(--line); font-size:13px; font-weight:600}
-    .fp-head span{margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--amber); border:1px solid rgba(255,178,36,.35); padding:2px 9px; border-radius:99px; font-weight:400}
-    #details{margin:0; padding:6px 0; list-style:none}
-    #details li{padding:9px 13px; border-bottom:1px solid var(--line); font-size:13px; display:flex; gap:10px}
-    #details li:last-child{border-bottom:0}
-    #details li::before{content:"·"; color:var(--dim)}
-    .check{display:flex; gap:10px; align-items:flex-start; background:var(--void); border:1px solid var(--line); border-radius:12px; padding:12px; margin:12px 0}
-    .check input{width:18px; height:18px; margin-top:2px; accent-color:#fff}
-    .check label{font-size:13px; color:var(--txt)}
-    .dock{position:fixed; bottom:0; left:0; right:0; z-index:20; background:rgba(10,10,11,.86); backdrop-filter:blur(14px); border-top:1px solid var(--line); padding:12px 18px calc(14px + env(safe-area-inset-bottom))}
-    .dock-inner{max-width:560px; margin:0 auto; display:flex; gap:8px}
-    .foot{max-width:560px; margin:0 auto; padding:0 18px 24px; color:var(--dim); font-size:11.5px; font-family:"JetBrains Mono",monospace; font-size:10.5px; display:flex; justify-content:space-between; gap:10px}
-    @media (prefers-reduced-motion: reduce){*{animation:none !important; transition:none !important}}
+    #details{margin:0 0 4px; padding-left:18px; font-size:13px; color:var(--txt)}
+    #details li{margin:5px 0}
+    .check{display:flex; gap:10px; align-items:flex-start; margin:12px 0}
+    .check input{width:18px; height:18px; accent-color:#fff}
+    .check label{font-size:13px}
+    .dock{position:fixed; bottom:0; left:0; right:0; background:rgba(10,10,11,.88); backdrop-filter:blur(14px); border-top:1px solid var(--line); padding:12px 18px calc(14px + env(safe-area-inset-bottom))}
+    .dock-inner{max-width:520px; margin:0 auto; display:flex; gap:8px}
   </style>
 </head>
 <body>
-  <header class="top">
-    <div class="top-inner">
-      <a class="back" href="/desktop" aria-label="Back to chat">←</a>
-      <div><b>Verify login</b><span>ticket · single-use · 90s</span></div>
-      <span class="live"><i></i> secure channel</span>
-    </div>
-  </header>
-
+  <header class="top"><div class="top-inner"><a class="back" href="/desktop" aria-label="Back">←</a><b>Verify login</b></div></header>
   <div class="wrap">
-    <div class="hero">
-      <h1>Is this you<br><em>trying to link?</em></h1>
-      <p>Confirm the fingerprint matches your desktop. Approving burns the ticket instantly — denying kills it.</p>
-    </div>
-    <div class="steps"><span class="done"></span><span class="done" id="mstep2"></span><span id="mstep3"></span></div>
+    <h1>Is this you<br><em>trying to link?</em></h1>
+    <p class="sub">Check it matches your desktop, then approve. The ticket burns instantly.</p>
 
     <section class="card">
-      <h2>Your mobile session</h2>
-      <p>In production this is your real IdP session. For the demo, mint a 1-hour pass here.</p>
-      <label class="lbl" for="userId">USER ID</label>
-      <input id="userId" type="text" placeholder="e.g. alice" value="alice" autocomplete="off" />
+      <h2>1 · Your session</h2>
+      <input id="userId" type="text" value="alice" autocomplete="off" aria-label="User id" />
+      <div class="row"><button id="login" class="btn btn-primary">Mint session</button></div>
+      <p class="note" id="loginOut">No session yet.</p>
+    </section>
+
+    <section class="card">
+      <h2>2 · The ticket</h2>
+      <input id="token" type="text" placeholder="Paste token" autocomplete="off" aria-label="Token" />
       <div class="row">
-        <button id="login" class="btn btn-primary">Mint session</button>
-        <button id="clearSession" class="btn btn-quiet">Clear</button>
-      </div>
-      <pre id="loginOut">No session yet</pre>
-    </section>
-
-    <section class="card">
-      <h2>Inspect the ticket</h2>
-      <p>Paste the token from the desktop QR (<span class="mono">?token=…</span>), or open the QR link here — it autofills.</p>
-      <label class="lbl" for="token">OPAQUE TOKEN</label>
-      <div class="field">
-        <input id="token" type="text" placeholder="Paste token or full link" autocomplete="off" />
         <button id="paste" class="btn btn-quiet" type="button">Paste</button>
+        <button id="preview" class="btn btn-primary">Inspect</button>
       </div>
-      <div class="row"><button id="preview" class="btn btn-primary">Inspect ticket</button></div>
-      <pre id="previewOut">Awaiting token…</pre>
-
+      <p class="note" id="previewOut">Awaiting token…</p>
       <div id="confirm" role="dialog" aria-labelledby="confirmTitle">
-        <div class="sheet">
-          <h3 id="confirmTitle">Check the fingerprint <span class="pill">90s · single-use</span></h3>
-          <div class="fp">
-            <div class="fp-head">Station fingerprint <span id="sheetStatus">Pending</span></div>
-            <ul id="details"></ul>
-          </div>
-          <div class="check">
-            <input id="ack" type="checkbox" />
-            <label for="ack">I started this login, the time looks right, and I know approving burns this ticket immediately.</label>
-          </div>
-        </div>
+        <ul id="details"></ul>
+        <div class="check"><input id="ack" type="checkbox" /><label for="ack">I started this login and the time looks right.</label></div>
       </div>
     </section>
   </div>
-
-  <div class="dock" id="dock" style="display:none">
-    <div class="dock-inner">
-      <button id="deny" class="btn btn-quiet" style="flex:1; border-color:rgba(244,33,46,.5); color:#FF8585">Deny</button>
-      <button id="approve" class="btn btn-primary" disabled>Approve</button>
-    </div>
-  </div>
-  <div class="foot"><span>Burn on claim · hash at rest · 256-bit</span><span><a href="/desktop" style="color:var(--mut)">Station →</a></span></div>
-
+  <div class="dock" id="dock" style="display:none"><div class="dock-inner">
+    <button id="deny" class="btn btn-quiet" style="flex:1; color:#FF8585">Deny</button>
+    <button id="approve" class="btn btn-primary" disabled>Approve</button>
+  </div></div>
   <script type="module" src="/client/mobile.js"></script>
 </body>
 </html>
