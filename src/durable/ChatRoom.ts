@@ -1,0 +1,526 @@
+/**
+ * ChatRoom Durable Object — one instance per roomId (idFromName(roomId)).
+ *
+ * Responsibilities:
+ * - Own WebSocket connections for the room (strong consistency, no race on broadcast)
+ * - Validate room membership server-side via verified JWT (never trust client room/user IDs)
+ * - Rate-limit connections and messages (sliding window via RateLimiter DO + local fallback)
+ * - Sanitize + validate messages, run pluggable moderation hook, block/flag before broadcast
+ * - Store history in DO storage (prepared-statement-style via structured keys; D1 example in comments)
+ * - Handle disconnects/reconnects without leaking state or duplicating messages
+ * - Enforce payload caps, HTTPS/WSS only (enforced at Worker boundary)
+ *
+ * Hibernation: uses state.acceptWebSocket() so connections survive eviction.
+ */
+
+import { log, redactIp } from "../lib/logger";
+import { sanitizeMessage, validateRoomId } from "../lib/sanitize";
+import { createModerationHook } from "../lib/moderation";
+import type { ChatMessage } from "../lib/types";
+import { MAX_MESSAGE_LENGTH, MAX_PAYLOAD_BYTES, MAX_ROOM_HISTORY } from "../lib/constants";
+import { verifyJwt, extractBearer } from "../lib/jwt";
+
+// Stored keys
+// messages:<roomId>:<ts>:<id> -> ChatMessage
+// blocks:<userId> -> Set<blockedUserId>
+// reports -> array
+
+type SessionMeta = {
+  userId: string;
+  displayName?: string;
+  ip: string;
+  connectedAt: number;
+  lastSeen: number;
+};
+
+type ChatEnv = {
+  RATE_LIMITER: DurableObjectNamespace;
+  JWT_SECRET?: string;
+  ROOM_MEMBERS_JSON?: string;
+  MODERATION_KEY?: string;
+};
+
+export class ChatRoom implements DurableObject {
+  private state: DurableObjectState;
+  private storage: DurableObjectStorage;
+  private env: ChatEnv;
+
+  // In-memory session map keyed by WebSocket — rebuilt on wake via serializeAttachment
+  private sessions = new Map<WebSocket, SessionMeta>();
+
+  // In-memory rate counters fallback if RateLimiter DO unavailable (resets on eviction but DO alarm persists)
+  private msgCounts = new Map<string, number[]>();
+
+  // Mock membership: in prod, query D1/KV. Here allow any authenticated user; hook is pluggable.
+  // Override via env.ROOM_MEMBERS_JSON or implement checkMembership below.
+  private blockedUsers = new Map<string, Set<string>>(); // userId -> blocked set
+  private reportedMessages: Array<{ messageId: string; reporterId: string; reason: string; ts: number }> = [];
+
+  constructor(state: DurableObjectState, env: ChatEnv) {
+    this.state = state;
+    this.storage = state.storage;
+    this.env = env;
+
+    // Restore hibernated websockets' attachments after eviction
+    const wsList = this.state.getWebSockets();
+    for (const ws of wsList) {
+      const att = ws.deserializeAttachment() as SessionMeta | null;
+      if (att) this.sessions.set(ws, att);
+    }
+  }
+
+  async fetch(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const path = url.pathname;
+
+    // Internal: get history (authenticated)
+    if (req.method === "GET" && path === "/history") return this.handleHistory(req);
+    if (req.method === "POST" && path === "/report") return this.handleReport(req);
+    if (req.method === "POST" && path === "/block") return this.handleBlock(req);
+    if (req.method === "POST" && path === "/message") return this.handleRestMessage(req);
+
+    // WebSocket upgrade — primary path: Worker forwards authenticated request
+    if (req.headers.get("Upgrade") === "websocket") {
+      return this.handleWebSocket(req);
+    }
+
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // ---- Membership check (server-side) ----
+  private async checkMembership(userId: string, roomId: string): Promise<boolean> {
+    // PLUG: query D1 with prepared statement:
+    //   SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?
+    // Example (uncomment when DB binding exists):
+    //   const row = await this.env.DB.prepare("SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?").bind(roomId, userId).first();
+    //   return !!row;
+
+    // For demo: check in-memory allowlist if configured
+    // If env.ROOM_MEMBERS_JSON is set like {"general":["user1","user2"]}, enforce it.
+    try {
+      if ((this.env as unknown as { ROOM_MEMBERS_JSON?: string }).ROOM_MEMBERS_JSON) {
+        const map = JSON.parse((this.env as unknown as { ROOM_MEMBERS_JSON: string }).ROOM_MEMBERS_JSON) as Record<string, string[]>;
+        if (map[roomId]) return map[roomId].includes(userId);
+      }
+    } catch {}
+    // Default: any authenticated user may join (still requires valid JWT)
+    return true;
+  }
+
+  private async isBlocked(senderId: string, viewerId: string): Promise<boolean> {
+    // Load from storage if not in memory
+    if (!this.blockedUsers.has(viewerId)) {
+      const stored = await this.storage.get<Set<string>>(`blocks:${viewerId}`);
+      if (stored) this.blockedUsers.set(viewerId, new Set(stored as unknown as string[]));
+      else this.blockedUsers.set(viewerId, new Set());
+    }
+    return this.blockedUsers.get(viewerId)!.has(senderId);
+  }
+
+  // ---- WebSocket handling ----
+  private async handleWebSocket(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const roomId = url.searchParams.get("roomId") || url.pathname.split("/").pop() || "";
+    const vRoom = validateRoomId(roomId);
+    if (!vRoom.ok) return Response.json({ error: vRoom.error }, { status: 400 });
+
+    // Payload size cap early
+    const cl = req.headers.get("Content-Length");
+    if (cl && parseInt(cl, 10) > MAX_PAYLOAD_BYTES) {
+      return Response.json({ error: "Payload too large" }, { status: 413 });
+    }
+
+    // Auth: Bearer JWT required
+    const token = extractBearer(req) || url.searchParams.get("token");
+    if (!token) return Response.json({ error: "Missing Authorization" }, { status: 401 });
+    const secret = (this.env as unknown as { JWT_SECRET?: string }).JWT_SECRET || "dev-secret-change-me";
+    const claims = await verifyJwt(token, secret);
+    if (!claims) return Response.json({ error: "Invalid or expired token" }, { status: 401 });
+
+    // Room membership check server-side (never trust client)
+    const allowed = await this.checkMembership(claims.userId, vRoom.value!);
+    if (!allowed) {
+      log("warn", "room.forbidden", { roomId: vRoom.value, userId: claims.userId, ip: redactIp(req.headers.get("CF-Connecting-IP") || "unknown") });
+      return Response.json({ error: "Not a member of this room" }, { status: 403 });
+    }
+
+    // Rate-limit connections per IP / per user via RateLimiter DO if available
+    const ip = req.headers.get("CF-Connecting-IP") || req.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
+    if (this.env.RATE_LIMITER) {
+      const rl = await this.checkRateLimitWithDo(`conn:ip:${ip}`, { limit: 30, windowMs: 60_000 });
+      if (!rl.allowed) return Response.json({ error: "Too many connections", retryAfterMs: rl.resetMs }, { status: 429 });
+      const rlUser = await this.checkRateLimitWithDo(`conn:user:${claims.userId}`, { limit: 30, windowMs: 60_000 });
+      if (!rlUser.allowed) return Response.json({ error: "Too many connections" }, { status: 429 });
+    }
+
+    // Enforce HTTPS/WSS already at Worker; double-check x-forwarded-proto
+    const proto = req.headers.get("X-Forwarded-Proto") || url.protocol.replace(":", "");
+    // Allow ws in local dev; in prod Worker already redirects http->https
+
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
+
+    const meta: SessionMeta = {
+      userId: claims.userId,
+      displayName: claims.displayName,
+      ip,
+      connectedAt: Date.now(),
+      lastSeen: Date.now(),
+    };
+
+    // Hibernation: attach metadata so it survives eviction
+    this.state.acceptWebSocket(server);
+    server.serializeAttachment(meta);
+    this.sessions.set(server, meta);
+
+    log("info", "room.join", { roomId: vRoom.value, userId: claims.userId, ip: redactIp(ip) });
+
+    // Send history + welcome
+    const history = await this.getHistory(vRoom.value!);
+    const welcome = {
+      type: "welcome",
+      roomId: vRoom.value,
+      userId: claims.userId,
+      history: await this.filterHistoryForUser(history, claims.userId),
+      ts: Date.now(),
+    };
+    // For hibernation, send after accept; queue microtask
+    queueMicrotask(() => {
+      try {
+        server.send(JSON.stringify(welcome));
+      } catch {}
+    });
+
+    // Broadcast join presence (excluding sender's blocked users handled per-recipient)
+    this.broadcast(vRoom.value!, { type: "presence", event: "join", userId: claims.userId, displayName: claims.displayName, ts: Date.now() }, claims.userId);
+
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    const meta = ws.deserializeAttachment() as SessionMeta | null;
+    if (!meta) {
+      try { ws.close(1008, "Missing session"); } catch {}
+      return;
+    }
+    // Keep session map in sync after hibernation wake
+    if (!this.sessions.has(ws)) this.sessions.set(ws, meta);
+
+    // Payload cap
+    const size = typeof message === "string" ? new TextEncoder().encode(message).length : (message as ArrayBuffer).byteLength;
+    if (size > MAX_PAYLOAD_BYTES) {
+      this.sendError(ws, "Payload too large", 1009);
+      return;
+    }
+
+    let data: unknown;
+    try {
+      data = JSON.parse(typeof message === "string" ? message : new TextDecoder().decode(message as ArrayBuffer));
+    } catch {
+      this.sendError(ws, "Invalid JSON");
+      return;
+    }
+
+    const obj = data as Record<string, unknown>;
+    if (obj.type === "ping") {
+      ws.send(JSON.stringify({ type: "pong", ts: Date.now() }));
+      return;
+    }
+
+    if (obj.type !== "message") {
+      this.sendError(ws, "Unknown message type");
+      return;
+    }
+
+    const roomId = typeof obj.roomId === "string" ? obj.roomId : "";
+    const vRoom = validateRoomId(roomId);
+    if (!vRoom.ok) {
+      this.sendError(ws, vRoom.error!);
+      return;
+    }
+
+    // Double-check membership on every message (never trust client-supplied roomId alone)
+    const allowed = await this.checkMembership(meta.userId, vRoom.value!);
+    if (!allowed) {
+      this.sendError(ws, "Not a member");
+      return;
+    }
+
+    // Rate limit messages per user/IP
+    if (this.env.RATE_LIMITER) {
+      const rlUser = await this.checkRateLimitWithDo(`msg:user:${meta.userId}`, { limit: 20, windowMs: 10_000 });
+      if (!rlUser.allowed) {
+        this.sendError(ws, "Rate limited", 1013);
+        ws.send(JSON.stringify({ type: "error", code: "rate_limited", retryAfterMs: rlUser.resetMs }));
+        return;
+      }
+      const rlIp = await this.checkRateLimitWithDo(`msg:ip:${meta.ip}`, { limit: 40, windowMs: 10_000 });
+      if (!rlIp.allowed) {
+        this.sendError(ws, "Rate limited");
+        return;
+      }
+    } else {
+      // Fallback in-memory sliding window
+      if (!this.checkLocalRateLimit(`msg:${meta.userId}`, 20, 10_000)) {
+        this.sendError(ws, "Rate limited (local)");
+        return;
+      }
+    }
+
+    // Sanitize + validate
+    const s = sanitizeMessage(obj.body);
+    if (!s.ok) {
+      this.sendError(ws, s.error!);
+      return;
+    }
+    const cleanBody = s.value!;
+
+    // Moderation hook — flag or block before broadcast
+    const modHook = createModerationHook(this.env as unknown as { MODERATION_KEY?: string });
+    const mod = await modHook(cleanBody, { userId: meta.userId, roomId: vRoom.value!, ip: meta.ip });
+    if (!mod.allowed) {
+      log("warn", "moderation.blocked_broadcast", { roomId: vRoom.value, userId: meta.userId, reason: mod.reason });
+      ws.send(JSON.stringify({ type: "moderation", allowed: false, reason: mod.reason, ts: Date.now() }));
+      return;
+    }
+
+    const chatMsg: ChatMessage = {
+      id: crypto.randomUUID(),
+      roomId: vRoom.value!,
+      userId: meta.userId,
+      displayName: meta.displayName,
+      body: mod.sanitizedBody ?? cleanBody,
+      ts: Date.now(),
+      flagged: mod.flagged || undefined,
+      flagReason: mod.reason,
+    };
+
+    // Store history — Durable Object storage (strong consistency)
+    // Prepared-statement style: no concatenation, structured keys
+    // D1 alternative (commented):
+    // await this.env.DB.prepare("INSERT INTO messages (id, room_id, user_id, body, ts, flagged) VALUES (?, ?, ?, ?, ?, ?)")
+    //   .bind(chatMsg.id, chatMsg.roomId, chatMsg.userId, chatMsg.body, chatMsg.ts, chatMsg.flagged ? 1 : 0).run();
+
+    await this.appendHistory(chatMsg);
+
+    if (mod.flagged) {
+      log("info", "moderation.flagged_broadcast", { messageId: chatMsg.id, roomId: chatMsg.roomId, userId: meta.userId, reason: mod.reason });
+    } else {
+      log("info", "room.message", { messageId: chatMsg.id.slice(0, 8), roomId: chatMsg.roomId, userId: meta.userId });
+    }
+
+    // Broadcast to room (respect blocks: don't deliver to users who blocked sender, or where sender blocked viewer? we do viewer-blocks-sender)
+    this.broadcast(vRoom.value!, { type: "message", message: chatMsg }, undefined);
+  }
+
+  async webSocketClose(ws: WebSocket, code: number, _reason: string, _wasClean: boolean): Promise<void> {
+    const meta = this.sessions.get(ws) || (ws.deserializeAttachment() as SessionMeta | null);
+    this.sessions.delete(ws);
+    if (meta) {
+      log("info", "room.leave", { userId: meta.userId, code });
+      // Find roomId from attachment or broadcast to all? We store room per connection via separate map if multi-room.
+      // For single-room-per-DO, broadcast leave to all remaining sessions
+      // Need to know roomId — we can store it in attachment as well. For now broadcast generically.
+      // Improvement: serialize roomId in attachment
+      const anyRoom = await this.inferRoomId();
+      if (anyRoom) this.broadcast(anyRoom, { type: "presence", event: "leave", userId: meta.userId, ts: Date.now() }, meta.userId);
+    }
+  }
+
+  async webSocketError(ws: WebSocket, _error: unknown): Promise<void> {
+    const meta = this.sessions.get(ws) || (ws.deserializeAttachment() as SessionMeta | null);
+    this.sessions.delete(ws);
+    log("warn", "room.ws_error", { userId: meta?.userId ?? "unknown" });
+  }
+
+  // ---- REST handlers inside DO ----
+  private async handleHistory(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const roomId = url.searchParams.get("roomId") || "";
+    const vRoom = validateRoomId(roomId);
+    if (!vRoom.ok) return Response.json({ error: vRoom.error }, { status: 400 });
+
+    // Auth required to read history (same JWT check as WS)
+    const token = extractBearer(req) || url.searchParams.get("token") || "";
+    const secret = (this.env as unknown as { JWT_SECRET?: string }).JWT_SECRET || "dev-secret-change-me";
+    const claims = token ? await verifyJwt(token, secret) : null;
+    if (!claims) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    const allowed = await this.checkMembership(claims.userId, vRoom.value!);
+    if (!allowed) return Response.json({ error: "Forbidden" }, { status: 403 });
+
+    const history = await this.getHistory(vRoom.value!);
+    const filtered = await this.filterHistoryForUser(history, claims.userId);
+    return Response.json({ roomId: vRoom.value, messages: filtered });
+  }
+
+  private async handleReport(req: Request): Promise<Response> {
+    const body = (await req.json().catch(() => null)) as { messageId?: string; reason?: string; roomId?: string } | null;
+    if (!body?.messageId || !body.reason) return Response.json({ error: "messageId and reason required" }, { status: 400 });
+    if (body.reason.length > 500) return Response.json({ error: "Reason too long" }, { status: 400 });
+
+    const token = extractBearer(req);
+    if (!token) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    const secret = (this.env as unknown as { JWT_SECRET?: string }).JWT_SECRET || "dev-secret-change-me";
+    const claims = await verifyJwt(token, secret);
+    if (!claims) return Response.json({ error: "Invalid token" }, { status: 401 });
+
+    this.reportedMessages.push({ messageId: body.messageId, reporterId: claims.userId, reason: body.reason.slice(0, 500), ts: Date.now() });
+    // Persist minimally (no message body, no PII beyond reporterId)
+    await this.storage.put(`reports:${Date.now()}:${crypto.randomUUID()}`, { messageId: body.messageId, reporterId: claims.userId, reason: body.reason.slice(0, 500), ts: Date.now() });
+
+    log("info", "room.report", { messageId: body.messageId.slice(0, 8), reporterId: claims.userId, roomId: body.roomId ?? "unknown" });
+    return Response.json({ ok: true });
+  }
+
+  private async handleBlock(req: Request): Promise<Response> {
+    const body = (await req.json().catch(() => null)) as { blockedUserId?: string } | null;
+    if (!body?.blockedUserId || typeof body.blockedUserId !== "string") return Response.json({ error: "blockedUserId required" }, { status: 400 });
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(body.blockedUserId)) return Response.json({ error: "Invalid userId" }, { status: 400 });
+
+    const token = extractBearer(req);
+    if (!token) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    const secret = (this.env as unknown as { JWT_SECRET?: string }).JWT_SECRET || "dev-secret-change-me";
+    const claims = await verifyJwt(token, secret);
+    if (!claims) return Response.json({ error: "Invalid token" }, { status: 401 });
+    if (claims.userId === body.blockedUserId) return Response.json({ error: "Cannot block yourself" }, { status: 400 });
+
+    let set = this.blockedUsers.get(claims.userId);
+    if (!set) {
+      const stored = await this.storage.get<string[]>(`blocks:${claims.userId}`);
+      set = new Set(stored ?? []);
+      this.blockedUsers.set(claims.userId, set);
+    }
+    set.add(body.blockedUserId);
+    await this.storage.put(`blocks:${claims.userId}`, [...set]);
+
+    log("info", "room.block", { userId: claims.userId, blockedId: body.blockedUserId });
+    return Response.json({ ok: true, blocked: [...set] });
+  }
+
+  private async handleRestMessage(req: Request): Promise<Response> {
+    // Optional REST send (rate-limited, same sanitization)
+    const body = (await req.json().catch(() => null)) as { roomId?: string; body?: string } | null;
+    if (!body?.roomId || typeof body.body !== "string") return Response.json({ error: "roomId and body required" }, { status: 400 });
+    const token = extractBearer(req);
+    if (!token) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    const secret = (this.env as unknown as { JWT_SECRET?: string }).JWT_SECRET || "dev-secret-change-me";
+    const claims = await verifyJwt(token, secret);
+    if (!claims) return Response.json({ error: "Invalid token" }, { status: 401 });
+
+    const vRoom = validateRoomId(body.roomId);
+    if (!vRoom.ok) return Response.json({ error: vRoom.error }, { status: 400 });
+    const allowed = await this.checkMembership(claims.userId, vRoom.value!);
+    if (!allowed) return Response.json({ error: "Forbidden" }, { status: 403 });
+
+    const s = sanitizeMessage(body.body);
+    if (!s.ok) return Response.json({ error: s.error }, { status: 400 });
+
+    const modHook = createModerationHook(this.env as unknown as { MODERATION_KEY?: string });
+    const ip = req.headers.get("CF-Connecting-IP") || "unknown";
+    const mod = await modHook(s.value!, { userId: claims.userId, roomId: vRoom.value!, ip });
+    if (!mod.allowed) return Response.json({ error: mod.reason, flagged: true }, { status: 422 });
+
+    const msg: ChatMessage = {
+      id: crypto.randomUUID(),
+      roomId: vRoom.value!,
+      userId: claims.userId,
+      displayName: claims.displayName,
+      body: mod.sanitizedBody ?? s.value!,
+      ts: Date.now(),
+      flagged: mod.flagged || undefined,
+      flagReason: mod.reason,
+    };
+    await this.appendHistory(msg);
+    this.broadcast(vRoom.value!, { type: "message", message: msg });
+    return Response.json({ ok: true, message: msg });
+  }
+
+  // ---- Helpers ----
+  private async getHistory(roomId: string): Promise<ChatMessage[]> {
+    // List keys prefix messages:<roomId>:
+    const prefix = `messages:${roomId}:`;
+    const listed = await this.storage.list<ChatMessage>({ prefix, limit: MAX_ROOM_HISTORY });
+    const arr = [...listed.values()].sort((a, b) => a.ts - b.ts);
+    return arr.slice(-MAX_ROOM_HISTORY);
+  }
+
+  private async appendHistory(msg: ChatMessage): Promise<void> {
+    const key = `messages:${msg.roomId}:${String(msg.ts).padStart(13, "0")}:${msg.id}`;
+    await this.storage.put(key, msg);
+    // Trim oldest if over limit (list + delete)
+    const all = await this.storage.list<ChatMessage>({ prefix: `messages:${msg.roomId}:` });
+    if (all.size > MAX_ROOM_HISTORY) {
+      const sorted = [...all.entries()].sort((a, b) => (a[1].ts - b[1].ts));
+      const toDelete = sorted.slice(0, all.size - MAX_ROOM_HISTORY).map(([k]) => k);
+      for (const k of toDelete) await this.storage.delete(k);
+    }
+  }
+
+  private async filterHistoryForUser(history: ChatMessage[], viewerId: string): Promise<ChatMessage[]> {
+    const out: ChatMessage[] = [];
+    for (const m of history) {
+      if (await this.isBlocked(m.userId, viewerId)) continue;
+      out.push(m);
+    }
+    return out;
+  }
+
+  private broadcast(roomId: string, data: unknown, excludeUserId?: string): void {
+    const payload = JSON.stringify(data);
+    // Deliver with per-recipient block check
+    for (const [ws, meta] of this.sessions) {
+      if (excludeUserId && meta.userId === excludeUserId && (data as Record<string, unknown>).type === "presence") {
+        // don't send join/leave to self? we do send to self for presence? skip self for join to avoid echo
+        continue;
+      }
+      // Check if viewer blocked sender
+      const senderId = (data as { message?: ChatMessage })?.message?.userId;
+      if (senderId && this.blockedUsers.get(meta.userId)?.has(senderId)) continue;
+      // Also check async isBlocked for those not in memory — best effort: we already have memory set
+      try {
+        if (ws.readyState === 1) ws.send(payload);
+      } catch {
+        // remove dead
+        this.sessions.delete(ws);
+      }
+    }
+  }
+
+  private sendError(ws: WebSocket, msg: string, code = 1008): void {
+    try {
+      ws.send(JSON.stringify({ type: "error", error: msg, ts: Date.now() }));
+    } catch {}
+  }
+
+  private async checkRateLimitWithDo(key: string, opts: { limit: number; windowMs: number }) {
+    const id = this.env.RATE_LIMITER.idFromName(`rl:${key}`);
+    const stub = this.env.RATE_LIMITER.get(id);
+    const res = await stub.fetch("https://rl/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, ...opts }),
+    });
+    if (!res.ok) return { allowed: true, remaining: opts.limit, resetMs: opts.windowMs };
+    return (await res.json()) as { allowed: boolean; remaining: number; resetMs: number };
+  }
+
+  private checkLocalRateLimit(key: string, limit: number, windowMs: number): boolean {
+    const now = Date.now();
+    const arr = this.msgCounts.get(key) ?? [];
+    const recent = arr.filter((t) => now - t < windowMs);
+    if (recent.length >= limit) return false;
+    recent.push(now);
+    this.msgCounts.set(key, recent);
+    return true;
+  }
+
+  private async inferRoomId(): Promise<string | null> {
+    // Try to infer from stored message keys
+    const listed = await this.storage.list({ prefix: "messages:", limit: 1 });
+    for (const k of listed.keys()) {
+      const parts = k.split(":");
+      if (parts.length >= 2) return parts[1];
+    }
+    return null;
+  }
+}

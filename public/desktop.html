@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Secure Chat — Desktop</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss: https:; frame-ancestors 'none'" />
+  <style>
+    :root { --bg:#0f1115; --card:#171a22; --line:#232836; --text:#e6e8ef; --muted:#9aa0b2; --accent:#6d7bff; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444 }
+    *{box-sizing:border-box} body{margin:0;font-family:ui-sans,system-ui,sans-serif;background:var(--bg);color:var(--text)}
+    header{padding:1.1rem 1rem;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+    main{max-width:860px;margin:0 auto;padding:1.25rem}
+    .grid{display:grid;grid-template-columns: 340px 1fr;gap:1.25rem}
+    @media(max-width:760px){ .grid{grid-template-columns:1fr} }
+    .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:1rem}
+    canvas{border-radius:12px;background:#fff}
+    button{background:var(--accent);color:#fff;border:0;padding:.6rem .9rem;border-radius:10px;cursor:pointer;font-weight:600}
+    button:disabled{opacity:.5}
+    input{width:100%;padding:.6rem .7rem;border-radius:10px;border:1px solid var(--line);background:#0f1115;color:var(--text)}
+    #msgs{height:280px;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:.6rem;background:#0f1115}
+    .msg{padding:.35rem 0;border-bottom:1px solid #1a1e2e}
+    .muted{color:var(--muted);font-size:.85rem}
+    code{word-break:break-all}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+</head>
+<body>
+<header>
+  <strong>Secure Chat — Desktop</strong>
+  <span class="muted">QR login · 90s · single-use · burned on claim</span>
+</header>
+<main>
+  <div class="grid">
+    <section class="card">
+      <h3 style="margin:.2rem 0 .6rem">1. Generate QR</h3>
+      <p class="muted">Token is opaque 32-byte random, never a JWT. Stored as SHA-256 hash. Expires in 90s, burned after claim.</p>
+      <button id="gen">Generate QR</button>
+      <span id="status" class="muted" style="margin-left:.5rem"></span>
+      <div id="qr" style="margin:1rem 0;min-height:300px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:16px;padding:12px"></div>
+      <div id="linkWrap" class="muted" style="display:none"><div>Link (for demo copy):</div><code id="link"></code></div>
+      <details style="margin-top:.75rem"><summary>How this stays safe</summary><ul class="muted">
+        <li>HTTPS/WSS only, HSTS, CSP, no-store.</li><li>IP rate-limited: 5 QR/min/IP.</li><li>Desktop holds optional WS for push; falls back to poll.</li>
+      </ul></details>
+    </section>
+    <section class="card">
+      <h3 style="margin:.2rem 0 .6rem">2. Chat</h3>
+      <div class="muted" id="me">Not logged in</div>
+      <div id="msgs"></div>
+      <div style="display:flex;gap:.5rem;margin-top:.5rem">
+        <input id="msgInput" placeholder="Type a message (max 2000 chars, HTML escaped)" maxlength="2000" />
+        <button id="send">Send</button>
+      </div>
+      <div style="display:flex;gap:.5rem;margin-top:.5rem">
+        <button id="historyBtn" style="background:#232836">Load history (REST)</button>
+        <button id="clearBtn" style="background:#232836">Clear</button>
+      </div>
+      <pre id="debug" style="background:#0f1115;border:1px solid var(--line);border-radius:12px;padding:.5rem;max-height:160px;overflow:auto" class="muted"></pre>
+    </section>
+  </div>
+  <section class="card" style="margin-top:1.25rem">
+    <h3>Why this design?</h3>
+    <p class="muted">See README for full threat model. Highlights: opaque token hashed at rest, single DO per token for burn atomicity, alarms for GC, JWT short-lived (1h), server-side membership & sanitization, moderation hook, sliding-window rate limits.</p>
+    <p><a href="/mobile" style="color:var(--accent)">Open mobile approve page →</a></p>
+  </section>
+</main>
+<script type="module">
+import "/client/desktop.js" assert { type: "json" };
+</script>
+<script type="module" src="/client/desktop.js"></script>
+</body>
+</html>

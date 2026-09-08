@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Secure Chat — Mobile Approve</title>
+  <style>
+    :root{--bg:#0f1115;--card:#171a22;--line:#232836;--text:#e6e8ef;--muted:#9aa0b2;--accent:#6d7bff;--bad:#ef4444}
+    *{box-sizing:border-box} body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--text)}
+    header{padding:1rem;border-bottom:1px solid var(--line)} main{max-width:640px;margin:0 auto;padding:1.25rem}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:1rem;margin:1rem 0}
+    button{background:var(--accent);color:#fff;border:0;padding:.6rem .9rem;border-radius:10px;cursor:pointer;font-weight:600}
+    button:disabled{opacity:.5} button.danger{background:var(--bad)} button.ghost{background:#232836}
+    input{width:100%;padding:.6rem;border-radius:10px;border:1px solid var(--line);background:#0f1115;color:var(--text)}
+    pre{background:#0f1115;border:1px solid var(--line);border-radius:12px;padding:.6rem;overflow:auto}
+    ul{padding-left:1.1rem} li{margin:.25rem 0}
+    .muted{color:var(--muted);font-size:.9rem}
+  </style>
+</head>
+<body>
+<header><strong>Secure Chat — Mobile Approve</strong> <span class="muted">Confirm before you trust</span></header>
+<main>
+  <section class="card">
+    <h3>Step 1 · Get a mobile session (dev)</h3>
+    <p class="muted">In production this is your real IdP session (cookie/OIDC). For demo we mint a short JWT here.</p>
+    <input id="userId" placeholder="userId (e.g. alice)" value="alice" />
+    <div style="margin:.6rem 0"><button id="login">Mint mobile session</button></div>
+    <pre id="loginOut" class="muted">No session yet</pre>
+  </section>
+  <section class="card">
+    <h3>Step 2 · Scan / paste token</h3>
+    <p class="muted">Paste the <code>token</code> from the desktop QR URL (<code>?token=...</code>), or open the QR link directly on this device.</p>
+    <input id="token" placeholder="opaque token" />
+    <div style="margin:.6rem 0;display:flex;gap:.5rem"><button id="preview">Preview login attempt</button><button id="paste" class="ghost">Paste</button></div>
+    <pre id="previewOut" class="muted"></pre>
+    <div id="confirm" style="display:none;border:1px solid #7f1d1d;background:#1a0f12;border-radius:12px;padding:1rem;margin-top:.75rem">
+      <p style="color:#fecaca;margin:.2rem 0  .6rem"><strong>⚠️ Confirm this login attempt</strong></p>
+      <ul id="details"></ul>
+      <label style="display:flex;gap:.5rem;align-items:center;margin:.6rem 0"><input type="checkbox" id="ack" style="width:auto"/> I verify this is my desktop, I initiated this login, and the location/time look correct.</label>
+      <div style="display:flex;gap:.5rem"><button id="approve" disabled>✓ Approve</button><button id="deny" class="danger">✕ Deny</button></div>
+      <p class="muted">On approval the desktop token is marked <em>approved</em> but still must be <em>burned</em> by the desktop claiming it (single-use, no replay). You can deny to instantly revoke.</p>
+    </div>
+  </section>
+  <section class="card muted">
+    <h3 style="color:var(--text)">What you’re confirming</h3>
+    <ul><li>Device/browser fingerprint (UA, IP city/country, accept-language)</li><li>Timestamp & expiry (90s window)</li><li>That you tapped explicitly — no auto-approve</li></ul>
+    <p><a href="/desktop" style="color:var(--accent)">Back to desktop →</a></p>
+  </section>
+</main>
+<script type="module" src="/client/mobile.js"></script>
+</body>
+</html>

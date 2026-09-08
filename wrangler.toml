@@ -1,0 +1,54 @@
+name = "secure-chat-workers"
+main = "src/worker.ts"
+compatibility_date = "2025-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Workers runtime — never Node.js. TypeScript entry handles all routes.
+
+[vars]
+ENVIRONMENT = "production"
+QR_TTL_SECONDS = "90"
+JWT_TTL_SECONDS = "3600"
+MAX_MESSAGE_LENGTH = "2000"
+MAX_ROOM_HISTORY = "100"
+
+# ---- Durable Objects ----
+# 1) ChatRoom: one instance per chat room, owns WebSockets + message history (strong consistency)
+# 2) AuthSession: one instance per opaque QR token (pending/approved/burned — single-use, no race)
+# 3) RateLimiter: sliding-window counters per key (IP / user) with alarms for GC
+
+[durable_objects]
+bindings = [
+  { name = "CHAT_ROOM", class_name = "ChatRoom" },
+  { name = "AUTH_SESSION", class_name = "AuthSession" },
+  { name = "RATE_LIMITER", class_name = "RateLimiter" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ChatRoom", "AuthSession", "RateLimiter"]
+
+# ---- D1 (optional message history) ----
+# Uncomment after `wrangler d1 create chat-history`
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "chat-history"
+# database_id = "replace-with-real-id"
+
+[observability]
+enabled = true
+
+# ---- Secrets (set via `wrangler secret put`) ----
+# JWT_SECRET       — HS256 key for short-lived session JWTs
+# MODERATION_KEY   — optional external moderation API key
+
+# ---- Limits & Safety ----
+[limits]
+cpu_ms = 50
+
+# Uncomment to pin to a zone / route when deploying:
+# [[routes]]
+# pattern = "chat.example.com/*"
+# zone_name = "example.com"
+
+# Local dev uses http://, production enforces HTTPS/WSS at the Worker layer (see src/lib/headers.ts)

@@ -1,0 +1,19 @@
+{
+  "name": "secure-chat-workers",
+  "version": "1.0.0",
+  "description": "Secure real-time chat with Cloudflare Workers, Durable Objects, and QR login",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "format": "prettier --write \"src/**/*.{ts,js}\" \"public/**/*.{js,html}\""
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250822.0",
+    "typescript": "^5.5.4",
+    "wrangler": "^4.129.1"
+  },
+  "dependencies": {}
+}
