@@ -1,4 +1,16 @@
-// Secure Chat — QR-only, 2-person, E2E. Refresh erases.
+// Secure Chat — QR-only, 2-person, E2E. Refresh erases + refresh closes own tab.
+try {
+  const nav = performance.getEntriesByType && performance.getEntriesByType("navigation")[0];
+  const isReload = (nav && nav.type === "reload") || (performance.navigation && performance.navigation.type === 1);
+  if (isReload) {
+    try { localStorage.clear(); sessionStorage.clear(); } catch {}
+    // Close own tab on reload (peer already closed via beforeunload WS 4000)
+    try { history.replaceState(null, "", "about:blank"); } catch {}
+    location.href = "about:blank";
+    try { window.close(); } catch {}
+    throw new Error("reload closing");
+  }
+} catch (e) { if (e && e.message === "reload closing") throw e; }
 try { localStorage.clear(); sessionStorage.clear(); } catch {}
 const API_BASE = (typeof window !== "undefined" && window.__API_BASE__ ? window.__API_BASE__ : "").replace(/\/$/, "");
 const api = (p) => `${API_BASE}${p}`;

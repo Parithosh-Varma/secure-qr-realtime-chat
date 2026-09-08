@@ -1,4 +1,15 @@
 // Mobile — scan to chat directly, nickname-only, ephemeral, E2E on dm_*.
+try {
+  const nav = performance.getEntriesByType && performance.getEntriesByType("navigation")[0];
+  const isReload = (nav && nav.type === "reload") || (performance.navigation && performance.navigation.type === 1);
+  if (isReload) {
+    try { localStorage.clear(); sessionStorage.clear(); } catch {}
+    try { history.replaceState(null, "", "about:blank"); } catch {}
+    location.href = "about:blank";
+    try { window.close(); } catch {}
+    throw new Error("reload closing");
+  }
+} catch (e) { if (e && e.message === "reload closing") throw e; }
 try { localStorage.clear(); sessionStorage.clear(); } catch {}
 const API_BASE2 = (typeof window !== "undefined" && window.__API_BASE__ ? window.__API_BASE__ : "").replace(/\/$/, "");
 const api2 = (p) => `${API_BASE2}${p}`;
