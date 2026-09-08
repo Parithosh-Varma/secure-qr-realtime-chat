@@ -320,13 +320,26 @@ export class ChatRoom implements DurableObject {
     const meta = this.sessions.get(ws) || (ws.deserializeAttachment() as SessionMeta | null);
     this.sessions.delete(ws);
     if (meta) {
-      log("info", "room.leave", { userId: meta.userId, code });
-      // Find roomId from attachment or broadcast to all? We store room per connection via separate map if multi-room.
-      // For single-room-per-DO, broadcast leave to all remaining sessions
-      // Need to know roomId — we can store it in attachment as well. For now broadcast generically.
-      // Improvement: serialize roomId in attachment
+      log("info", "room.leave", { userId: hashForLog(meta.userId), code });
       const anyRoom = await this.inferRoomId();
-      if (anyRoom) this.broadcast(anyRoom, { type: "presence", event: "leave", userId: meta.userId, ts: Date.now() }, meta.userId);
+      if (anyRoom) {
+        this.broadcast(anyRoom, { type: "presence", event: "leave", userId: meta.userId, ts: Date.now() }, meta.userId);
+        // 2-person ephemeral: if one refreshes/closes, close the peer's tab as well (refresh erases → peer closed)
+        const remaining = [...this.sessions.values()];
+        const hibernated = this.state.getWebSockets().map((w) => w.deserializeAttachment() as SessionMeta | null).filter(Boolean) as SessionMeta[];
+        const totalRemaining = remaining.length + hibernated.length;
+        // Notify remaining peers to close (refresh on any device closes the other)
+        if (totalRemaining > 0) {
+          this.broadcast(anyRoom, { type: "peer_closed", reason: "peer_refreshed", ts: Date.now() });
+          // also force-close remaining sockets so they trigger onclose → window.close fallback
+          for (const s of this.state.getWebSockets()) {
+            try { s.close(4000, "peer_refreshed"); } catch {}
+          }
+          this.sessions.clear();
+        }
+        // schedule immediate GC for ephemeral dm_* (already handled in alarm, but also clear if empty)
+        if (totalRemaining === 0) await this.storage.setAlarm(Date.now() + 5000);
+      }
     }
   }
 

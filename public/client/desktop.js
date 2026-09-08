@@ -300,10 +300,15 @@ async function connectChat(roomId = "general") {
         presenceEl._t = setTimeout(() => (presenceEl.style.display = "none"), 3500);
       }
       else if (d.type === "moderation") { appendSystem("Blocked by moderation."); toast("Blocked"); }
+      else if (d.type === "peer_closed") { appendSystem("Peer refreshed — closing"); toast("Peer left — closing tab…"); setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; }, 800); try{ chatWs.close(); }catch{} }
       else if (d.type === "error") appendSystem(d.error.includes("full") ? "Room full — only 2" : "Error — try again");
     } catch {}
   };
-  chatWs.onclose = () => { appendSystem("Disconnected — reload erases (ephemeral)"); renderMe(); };
+  chatWs.onclose = (e) => {
+    // refresh on any device closes peer: if peer refreshed, server closes us with 4000
+    if (e && e.code === 4000) { appendSystem("Peer refreshed — closing tab…"); setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; }, 500); return; }
+    appendSystem("Disconnected — reload erases (ephemeral)"); renderMe();
+  };
   renderMe();
 }
 async function appendMsg(m) {
@@ -379,6 +384,27 @@ $("#newChatBtn")?.addEventListener("click", () => { msgsEl.innerHTML = ""; updat
 $("#menuBtn")?.addEventListener("click", () => $("#sidebar")?.classList.add("open"));
 $$(".room").forEach((b) => b.addEventListener("click", () => { connectChat(b.dataset.room); $("#sidebar")?.classList.remove("open"); }));
 
+async function ensureEphemeralIdentity() {
+  if (jwt && identity) return;
+  const nick = `anon-${Math.random().toString(36).slice(2,6)}`;
+  const tmpId = `u_${Math.random().toString(36).slice(2,10)}_${Date.now().toString(36)}`;
+  try {
+    const res = await fetch(api("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: tmpId, displayName: nick }) });
+    const data = await res.json();
+    if (data.token) { jwt = data.token; identity = { userId: data.userId, displayName: nick }; renderMe(); }
+  } catch {}
+}
+
+// Refresh on any device closes the other tab (ephemeral 2-person)
+window.addEventListener("beforeunload", () => { try { chatWs?.close(1000, "refresh"); ws?.close(1000, "refresh"); } catch {} });
+window.addEventListener("keydown", (e) => {
+  if (e.key === "F5" || (e.ctrlKey && e.key.toLowerCase() === "r") || (e.metaKey && e.key.toLowerCase() === "r")) {
+    e.preventDefault();
+    try { chatWs?.close(1000, "refresh"); ws?.close(1000, "refresh"); } catch {}
+    setTimeout(() => { try { window.close(); } catch {} location.href = "about:blank"; }, 80);
+  }
+});
+
 // Boot: ephemeral, no nickname ask — QR only. Auto-mint random anon, show QR.
 renderMe();
 setTimer();
@@ -386,6 +412,6 @@ ensureEphemeralIdentity().then(() => {
   renderMe();
   setGated(true);
   if (heroEl) heroEl.style.display = "";
-  appendSystem("Share this QR to chat — no account, no nickname needed. Scan to join (2-person, E2E). Refresh erases everything.");
+  appendSystem("Share this QR to chat — no account, no nickname needed. Scan to join (2-person, E2E). Refresh erases everything — peer tab will also close.");
   gen();
 });

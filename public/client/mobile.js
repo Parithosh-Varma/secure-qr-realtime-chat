@@ -85,9 +85,13 @@ async function joinChatM() {
         const mine = d.message.userId === (JSON.parse(atob(mobileJwt.split(".")[1]))?.userId);
         mAppend(`${d.message.displayName || d.message.userId}: ${body}`, mine);
       } else if (d.type === "presence") mSystem(`${d.userId} ${d.event}ed`);
+      else if (d.type === "peer_closed") { mSystem("Peer refreshed — closing tab…"); setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; }, 800); try{ mWs.close(); }catch{} }
     } catch {}
   };
-  mWs.onclose = () => { mSystem("Disconnected — refresh erases (ephemeral)"); const b = $("#mSend"); if (b) b.disabled = true; };
+  mWs.onclose = (e) => {
+    if (e && e.code === 4000) { mSystem("Peer refreshed — closing tab…"); setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; }, 500); return; }
+    mSystem("Disconnected — refresh erases (ephemeral)"); const b = $("#mSend"); if (b) b.disabled = true;
+  };
   const send = async () => {
     const v = inp?.value.trim();
     if (!v || !mWs || mWs.readyState !== 1) return;
@@ -208,5 +212,14 @@ try {
     if (sub) sub.textContent = "Connected via QR — just chat.";
   }
 } catch {}
+// Refresh on any device closes the other tab (ephemeral 2-person)
+window.addEventListener("beforeunload", () => { try { mWs?.close(1000, "refresh"); } catch {} });
+window.addEventListener("keydown", (e) => {
+  if (e.key === "F5" || (e.ctrlKey && e.key.toLowerCase() === "r") || (e.metaKey && e.key.toLowerCase() === "r")) {
+    e.preventDefault();
+    try { mWs?.close(1000, "refresh"); } catch {}
+    setTimeout(() => { try { window.close(); } catch {} location.href = "about:blank"; }, 80);
+  }
+});
 // Refresh erases: no restore from storage — always start fresh
 
