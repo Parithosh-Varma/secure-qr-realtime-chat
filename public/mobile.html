@@ -2,132 +2,136 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Secure QR Chat — Mobile Key</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Verify login — Secure Chat</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
-    :root{--chalk:#FCFCF9;--ink:#0E1A24;--line:#DDE1E7;--concrete:#E9EAF0;--cobalt:#2D5BFF;--signal:#FFD60A;--rose:#FF4D6A;--muted:#6B7280;--ok:#0E7A4C;--radius:14px}
-    *{box-sizing:border-box} body{margin:0; font-family:"IBM Plex Sans",sans-serif; background:var(--chalk); color:var(--ink); -webkit-font-smoothing:antialiased; line-height:1.45}
-    .top{position:sticky; top:0; z-index:10; background:var(--ink); color:var(--chalk); border-bottom:4px solid var(--cobalt)}
-    .top-inner{max-width:640px; margin:0 auto; padding:14px 20px; display:flex; align-items:center; justify-content:space-between; gap:12px}
-    .brand{display:flex; gap:12px; align-items:center}
-    .mark{width:28px; height:28px; border-radius:8px; background:var(--signal); display:grid; place-items:center; font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--ink)}
-    .brand h1{margin:0; font-family:"Space Grotesk",sans-serif; font-size:16px; font-weight:700; letter-spacing:-0.02em; line-height:1}
-    .brand p{margin:2px 0 0; font-family:"JetBrains Mono",monospace; font-size:11px; color:#9AA0B6}
-    .top a{color:var(--chalk); text-decoration:none; border:1px solid rgba(255,255,255,0.18); padding:6px 10px; border-radius:999px; font-size:12px}
-    .wrap{max-width:640px; margin:0 auto; padding:22px 20px 40px}
-    .card{background:#fff; border:1px solid var(--line); border-radius:var(--radius); padding:16px; margin:16px 0; box-shadow:0 1px 0 rgba(14,26,36,0.04), 0 8px 24px rgba(14,26,36,0.05)}
-    .card h2{margin:0 0 6px; font-family:"Space Grotesk",sans-serif; font-size:15px; font-weight:700; letter-spacing:-0.02em}
-    .card p{margin:0 0 12px; font-size:13px; color:var(--muted)}
-    .mono{font-family:"JetBrains Mono",monospace; font-size:11px}
-    .field{display:flex; flex-direction:column; gap:8px; margin:10px 0}
-    input[type=text]{width:100%; padding:11px 12px; border-radius:10px; border:1px solid var(--line); background:var(--chalk); font-size:14px; outline:none}
-    input:focus{border-color:var(--cobalt); box-shadow:0 0 0 3px rgba(45,91,255,0.18)}
-    .row{display:flex; gap:10px}
-    .btn{appearance:none; border:0; border-radius:10px; padding:11px 14px; font-weight:500; font-size:14px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:8px; transition:transform 120ms ease, background 120ms ease}
-    .btn:active{transform:translateY(1px)} .btn:focus-visible{outline:2px solid var(--cobalt); outline-offset:2px}
-    .btn-primary{background:var(--cobalt); color:#fff; flex:1} .btn-primary:hover{background:#244ee0} .btn-primary:disabled{opacity:0.45; cursor:not-allowed}
-    .btn-ghost{background:#fff; color:var(--ink); border:1px solid var(--line)} .btn-ghost:hover{background:var(--concrete)}
-    .btn-danger{background:var(--rose); color:#fff} .btn-danger:hover{background:#e54860}
-    pre{background:var(--ink); color:#DDE1E7; border-radius:10px; padding:12px; overflow:auto; border:1px solid #1A2432; font-family:"JetBrains Mono",monospace; font-size:11px; white-space:pre-wrap; word-break:break-word}
-    .sheet{border:1px solid var(--line); border-radius:12px; overflow:hidden}
-    .sheet-head{padding:10px 14px; background:var(--chalk); border-bottom:1px dashed var(--line); display:flex; justify-content:space-between; align-items:center}
-    .sheet-head strong{font-family:"Space Grotesk",sans-serif; font-size:13px}
-    .sheet-head span{font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--muted); background:#fff; border:1px solid var(--line); padding:3px 8px; border-radius:999px}
-    .sheet-body{padding:14px; background:#fff}
-    #details{margin:0; padding-left:18px; font-size:13px}
-    #details li{margin:6px 0}
-    .check{display:flex; gap:10px; align-items:flex-start; background:var(--chalk); border:1px solid var(--line); border-radius:10px; padding:12px; margin:12px 0}
-    .check input{margin-top:2px}
-    .check label{font-size:13px; color:var(--ink)}
-    .confirm{display:none; border:1px solid #F3D98A; background:#FFFDF0; border-radius:12px; padding:14px; margin-top:12px}
-    .confirm.open{display:block}
-    .confirm h3{margin:0 0 8px; font-family:"Space Grotesk",sans-serif; font-size:14px; color:#7A5A00}
-    .pill{display:inline-flex; align-items:center; gap:6px; font-family:"JetBrains Mono",monospace; font-size:11px; background:#fff; border:1px solid #F1D17A; padding:4px 8px; border-radius:999px; color:#7A5A00}
-    .pill i{width:6px; height:6px; border-radius:50%; background:var(--signal)}
-    .foot{max-width:640px; margin:0 auto; padding:0 20px 32px; color:var(--muted); font-size:12px; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap}
+    :root{
+      --void:#0A0A0B; --soot:#101014; --card:#131318; --raised:#1C1D23;
+      --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.13);
+      --txt:#ECECED; --mut:#9A9AA3; --dim:#6B6B74;
+      --aura:#7AA2FF; --amber:#FFB224; --danger:#F4212E; --ok:#34D399;
+    }
+    *{box-sizing:border-box}
+    body{margin:0; background:var(--void); color:var(--txt); font-family:"Inter",system-ui,sans-serif; -webkit-font-smoothing:antialiased; font-size:15px; line-height:1.55}
+    body::before{content:""; position:fixed; inset:0; pointer-events:none; background:radial-gradient(700px 260px at 50% -60px, rgba(122,162,255,.08), transparent 70%)}
+    :focus-visible{outline:2px solid var(--aura); outline-offset:2px}
+    .mono{font-family:"JetBrains Mono",monospace}
+    .top{position:sticky; top:0; z-index:10; background:rgba(10,10,11,.8); backdrop-filter:blur(12px); border-bottom:1px solid var(--line)}
+    .top-inner{max-width:560px; margin:0 auto; padding:13px 18px; display:flex; align-items:center; gap:12px}
+    .back{appearance:none; border:1px solid var(--line); background:transparent; color:var(--txt); width:32px; height:32px; border-radius:10px; cursor:pointer; text-decoration:none; display:grid; place-items:center; font-size:15px}
+    .top-inner b{font-family:"Inter Tight",sans-serif; font-size:14.5px; font-weight:600; letter-spacing:-.01em}
+    .top-inner span{display:block; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut)}
+    .live{margin-left:auto; display:inline-flex; align-items:center; gap:7px; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut); border:1px solid var(--line); border-radius:99px; padding:5px 11px; background:var(--soot)}
+    .live i{width:6px; height:6px; border-radius:50%; background:var(--ok)}
+    .wrap{position:relative; max-width:560px; margin:0 auto; padding:20px 18px 120px}
+    .hero{padding:14px 2px 4px}
+    .hero h1{margin:0; font-family:"Inter Tight",sans-serif; font-size:30px; font-weight:600; letter-spacing:-.04em; line-height:1.05}
+    .hero h1 em{font-style:normal; color:var(--mut); font-weight:500}
+    .hero p{margin:10px 0 0; color:var(--mut); font-size:13.5px}
+    .steps{display:flex; gap:6px; margin:16px 0 4px}
+    .steps span{height:3px; flex:1; border-radius:99px; background:var(--raised)}
+    .steps span.done{background:#fff}
+    .card{background:var(--card); border:1px solid var(--line); border-radius:18px; padding:16px; margin:14px 0}
+    .card h2{margin:0 0 4px; font-size:14px; font-weight:600; letter-spacing:-.01em; font-family:"Inter Tight",sans-serif}
+    .card p{margin:0 0 12px; font-size:13px; color:var(--mut)}
+    label.lbl{display:block; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--dim); margin:10px 0 6px; letter-spacing:.03em}
+    .field{display:flex; gap:8px}
+    input[type=text]{flex:1; min-width:0; background:var(--void); border:1px solid var(--line); color:var(--txt); border-radius:12px; padding:12px 13px; font-size:14px; outline:none; width:100%}
+    input:focus{border-color:rgba(122,162,255,.5)}
+    .row{display:flex; gap:8px; margin-top:10px}
+    .btn{appearance:none; border:0; border-radius:12px; padding:12px 14px; font-size:14px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:8px}
+    .btn-primary{background:#fff; color:#000; flex:1}
+    .btn-primary:hover{background:#E6E6E6}
+    .btn-primary:disabled{opacity:.4}
+    .btn-quiet{background:transparent; color:var(--txt); border:1px solid var(--line-2); font-weight:500}
+    .btn-danger{background:var(--danger); color:#fff; flex:1}
+    pre{background:#000; border:1px solid var(--line); color:#B9B9C2; border-radius:12px; padding:12px; overflow:auto; font-family:"JetBrains Mono",monospace; font-size:11px; white-space:pre-wrap; word-break:break-word; margin:12px 0 0}
+    .sheet{border:1px solid rgba(255,178,36,.3); background:rgba(255,178,36,.05); border-radius:16px; padding:14px; margin-top:12px}
+    #confirm{display:none}
+    #confirm.open{display:block}
+    #confirm h3{margin:0; font-family:"Inter Tight",sans-serif; font-size:15px; display:flex; align-items:center; gap:8px}
+    #confirm h3 .pill{margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:10px; color:var(--amber); border:1px solid rgba(255,178,36,.35); padding:3px 9px; border-radius:99px; font-weight:400}
+    .fp{margin:12px 0 0; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--void)}
+    .fp-head{display:flex; align-items:center; gap:8px; padding:10px 13px; border-bottom:1px solid var(--line); font-size:13px; font-weight:600}
+    .fp-head span{margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--amber); border:1px solid rgba(255,178,36,.35); padding:2px 9px; border-radius:99px; font-weight:400}
+    #details{margin:0; padding:6px 0; list-style:none}
+    #details li{padding:9px 13px; border-bottom:1px solid var(--line); font-size:13px; display:flex; gap:10px}
+    #details li:last-child{border-bottom:0}
+    #details li::before{content:"·"; color:var(--dim)}
+    .check{display:flex; gap:10px; align-items:flex-start; background:var(--void); border:1px solid var(--line); border-radius:12px; padding:12px; margin:12px 0}
+    .check input{width:18px; height:18px; margin-top:2px; accent-color:#fff}
+    .check label{font-size:13px; color:var(--txt)}
+    .dock{position:fixed; bottom:0; left:0; right:0; z-index:20; background:rgba(10,10,11,.86); backdrop-filter:blur(14px); border-top:1px solid var(--line); padding:12px 18px calc(14px + env(safe-area-inset-bottom))}
+    .dock-inner{max-width:560px; margin:0 auto; display:flex; gap:8px}
+    .foot{max-width:560px; margin:0 auto; padding:0 18px 24px; color:var(--dim); font-size:11.5px; font-family:"JetBrains Mono",monospace; font-size:10.5px; display:flex; justify-content:space-between; gap:10px}
+    @media (prefers-reduced-motion: reduce){*{animation:none !important; transition:none !important}}
   </style>
 </head>
 <body>
   <header class="top">
     <div class="top-inner">
-      <div class="brand">
-        <div class="mark">◐</div>
-        <div><h1>Mobile key</h1><p>Confirm before you trust</p></div>
-      </div>
-      <a href="/desktop">Station →</a>
+      <a class="back" href="/desktop" aria-label="Back to chat">←</a>
+      <div><b>Verify login</b><span>ticket · single-use · 90s</span></div>
+      <span class="live"><i></i> secure channel</span>
     </div>
   </header>
 
   <div class="wrap">
-    <div class="card" style="border-left:4px solid var(--cobalt)">
-      <h2>1 · Establish your mobile session</h2>
-      <p>In production this is your real IdP session. For the demo we mint a 1-hour JWT here and store it locally.</p>
-      <div class="field">
-        <label class="mono" for="userId" style="color:var(--muted)">User id</label>
-        <input id="userId" type="text" placeholder="e.g. alice" value="alice" autocomplete="off" />
-      </div>
+    <div class="hero">
+      <h1>Is this you<br><em>trying to link?</em></h1>
+      <p>Confirm the fingerprint matches your desktop. Approving burns the ticket instantly — denying kills it.</p>
+    </div>
+    <div class="steps"><span class="done"></span><span class="done" id="mstep2"></span><span id="mstep3"></span></div>
+
+    <section class="card">
+      <h2>Your mobile session</h2>
+      <p>In production this is your real IdP session. For the demo, mint a 1-hour pass here.</p>
+      <label class="lbl" for="userId">USER ID</label>
+      <input id="userId" type="text" placeholder="e.g. alice" value="alice" autocomplete="off" />
       <div class="row">
         <button id="login" class="btn btn-primary">Mint session</button>
-        <button id="clearSession" class="btn btn-ghost">Clear</button>
+        <button id="clearSession" class="btn btn-quiet">Clear</button>
       </div>
-      <pre id="loginOut" style="margin-top:12px">No session yet</pre>
-    </div>
+      <pre id="loginOut">No session yet</pre>
+    </section>
 
-    <div class="card">
-      <h2>2 · Inspect the link</h2>
-      <p>Paste the <code style="font-family:JetBrains Mono,monospace; background:var(--chalk); border:1px solid var(--line); padding:1px 6px; border-radius:6px">token</code> from the station QR (<code style="font-family:JetBrains Mono,monospace">?token=…</code>), or open the QR link directly on this device — it autofills.</p>
+    <section class="card">
+      <h2>Inspect the ticket</h2>
+      <p>Paste the token from the desktop QR (<span class="mono">?token=…</span>), or open the QR link here — it autofills.</p>
+      <label class="lbl" for="token">OPAQUE TOKEN</label>
       <div class="field">
-        <label class="mono" for="token" style="color:var(--muted)">Opaque token</label>
-        <div class="row">
-          <input id="token" type="text" placeholder="Paste token or full link" autocomplete="off" style="flex:1" />
-          <button id="paste" class="btn btn-ghost" type="button">Paste</button>
-        </div>
+        <input id="token" type="text" placeholder="Paste token or full link" autocomplete="off" />
+        <button id="paste" class="btn btn-quiet" type="button">Paste</button>
       </div>
-      <div class="row">
-        <button id="preview" class="btn btn-primary">Inspect</button>
-      </div>
-      <pre id="previewOut" style="margin-top:12px">Awaiting token…</pre>
+      <div class="row"><button id="preview" class="btn btn-primary">Inspect ticket</button></div>
+      <pre id="previewOut">Awaiting token…</pre>
 
-      <div id="confirm" class="confirm" role="dialog" aria-labelledby="confirmTitle" aria-modal="false">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px">
-          <h3 id="confirmTitle">Check-sheet — verify this is you</h3>
-          <span class="pill"><i></i> 90s · single-use</span>
-        </div>
-        <div class="sheet" style="margin-top:10px">
-          <div class="sheet-head"><strong>Station fingerprint</strong><span id="sheetStatus">Pending</span></div>
-          <div class="sheet-body">
+      <div id="confirm" role="dialog" aria-labelledby="confirmTitle">
+        <div class="sheet">
+          <h3 id="confirmTitle">Check the fingerprint <span class="pill">90s · single-use</span></h3>
+          <div class="fp">
+            <div class="fp-head">Station fingerprint <span id="sheetStatus">Pending</span></div>
             <ul id="details"></ul>
           </div>
+          <div class="check">
+            <input id="ack" type="checkbox" />
+            <label for="ack">I started this login, the time looks right, and I know approving burns this ticket immediately.</label>
+          </div>
         </div>
-        <div class="check">
-          <input id="ack" type="checkbox" />
-          <label for="ack">I initiated this login on my station, the city/time looks correct, and I understand approving will burn this link immediately.</label>
-        </div>
-        <div class="row">
-          <button id="approve" class="btn btn-primary" disabled>Approve</button>
-          <button id="deny" class="btn btn-danger">Deny</button>
-        </div>
-        <p class="mono" style="margin:10px 0 0; color:var(--muted)">On deny the ticket is marked <em>denied</em> and the station is notified instantly.</p>
       </div>
-    </div>
-
-    <div class="card" style="background:var(--chalk)">
-      <h2>What you’re confirming</h2>
-      <ul style="margin:6px 0 0; padding-left:18px; font-size:13px; color:var(--muted)">
-        <li>Device & browser, approximate city/country, language</li>
-        <li>Creation time and seconds remaining</li>
-        <li>That you tapped explicitly — no auto-approve exists</li>
-      </ul>
-    </div>
+    </section>
   </div>
 
-  <div class="foot">
-    <div>Ink + Chalk + Cobalt + Signal · Space Grotesk / IBM Plex</div>
-    <div class="mono">Burn on claim · hash at rest · 256-bit</div>
+  <div class="dock" id="dock" style="display:none">
+    <div class="dock-inner">
+      <button id="deny" class="btn btn-quiet" style="flex:1; border-color:rgba(244,33,46,.5); color:#FF8585">Deny</button>
+      <button id="approve" class="btn btn-primary" disabled>Approve</button>
+    </div>
   </div>
+  <div class="foot"><span>Burn on claim · hash at rest · 256-bit</span><span><a href="/desktop" style="color:var(--mut)">Station →</a></span></div>
 
   <script type="module" src="/client/mobile.js"></script>
 </body>
