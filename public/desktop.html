@@ -3,69 +3,330 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Secure Chat — Desktop</title>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss: https:; frame-ancestors 'none'" />
-  <style>
-    :root { --bg:#0f1115; --card:#171a22; --line:#232836; --text:#e6e8ef; --muted:#9aa0b2; --accent:#6d7bff; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444 }
-    *{box-sizing:border-box} body{margin:0;font-family:ui-sans,system-ui,sans-serif;background:var(--bg);color:var(--text)}
-    header{padding:1.1rem 1rem;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
-    main{max-width:860px;margin:0 auto;padding:1.25rem}
-    .grid{display:grid;grid-template-columns: 340px 1fr;gap:1.25rem}
-    @media(max-width:760px){ .grid{grid-template-columns:1fr} }
-    .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:1rem}
-    canvas{border-radius:12px;background:#fff}
-    button{background:var(--accent);color:#fff;border:0;padding:.6rem .9rem;border-radius:10px;cursor:pointer;font-weight:600}
-    button:disabled{opacity:.5}
-    input{width:100%;padding:.6rem .7rem;border-radius:10px;border:1px solid var(--line);background:#0f1115;color:var(--text)}
-    #msgs{height:280px;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:.6rem;background:#0f1115}
-    .msg{padding:.35rem 0;border-bottom:1px solid #1a1e2e}
-    .muted{color:var(--muted);font-size:.85rem}
-    code{word-break:break-all}
-  </style>
+  <title>Secure QR Chat — Station</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <style>
+    :root{
+      --chalk:#FCFCF9;
+      --ink:#0E1A24;
+      --line:#DDE1E7;
+      --concrete:#E9EAF0;
+      --cobalt:#2D5BFF;
+      --signal:#FFD60A;
+      --rose:#FF4D6A;
+      --muted:#6B7280;
+      --ok:#0E7A4C;
+      --radius:14px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      background:var(--chalk);
+      color:var(--ink);
+      -webkit-font-smoothing:antialiased;
+      line-height:1.45;
+    }
+    /* header */
+    .topbar{
+      position:sticky; top:0; z-index:10;
+      background:var(--ink);
+      color:var(--chalk);
+      border-bottom:4px solid var(--cobalt);
+    }
+    .topbar-inner{
+      max-width:1120px; margin:0 auto; padding:14px 20px;
+      display:flex; align-items:center; justify-content:space-between; gap:16px;
+    }
+    .brand{
+      display:flex; align-items:center; gap:14px;
+    }
+    .mark{
+      width:28px; height:28px; border-radius:8px; background:var(--signal);
+      display:grid; place-items:center; font-family:"JetBrains Mono",monospace; font-weight:500; font-size:13px; color:var(--ink);
+      flex:0 0 auto;
+    }
+    .brand h1{
+      margin:0; font-family:"Space Grotesk",sans-serif; font-weight:700; font-size:18px; letter-spacing:-0.02em; line-height:1;
+    }
+    .brand p{margin:2px 0 0; font-family:"JetBrains Mono",monospace; font-size:11px; color:#9AA0B6; letter-spacing:0.04em}
+    .top-meta{
+      font-family:"JetBrains Mono",monospace; font-size:11px; color:#DDE1E7; opacity:0.9;
+      display:flex; align-items:center; gap:10px;
+    }
+    .live-dot{width:8px; height:8px; border-radius:50%; background:var(--signal); box-shadow:0 0 0 6px rgba(255,214,10,0.18); animation: pulse 2s infinite}
+    @media (prefers-reduced-motion: reduce){ .live-dot{animation:none} }
+    @keyframes pulse{0%,100%{opacity:1} 50%{opacity:0.6}}
+
+    .wrap{max-width:1120px; margin:0 auto; padding:28px 20px 40px}
+
+    /* intro strip */
+    .strip{
+      display:grid; grid-template-columns: 1fr auto; gap:18px; align-items:center;
+      border:1px solid var(--line); background:#fff; border-radius:var(--radius);
+      padding:14px 16px; margin-bottom:22px;
+    }
+    .strip p{margin:0; font-size:13px; color:var(--muted); max-width:62ch}
+    .strip strong{color:var(--ink); font-weight:500}
+    .strip a{color:var(--cobalt); text-underline-offset:3px}
+    @media(max-width:760px){ .strip{grid-template-columns:1fr} }
+
+    /* main grid */
+    .grid{
+      display:grid;
+      grid-template-columns: 380px 1fr;
+      gap:18px;
+      align-items:start;
+    }
+    @media(max-width:980px){ .grid{grid-template-columns:1fr} }
+
+    /* QR stub - paper object */
+    .stub{
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      overflow:hidden;
+      position:relative;
+      box-shadow: 0 1px 0 rgba(14,26,36,0.04), 0 8px 24px rgba(14,26,36,0.06);
+    }
+    .stub-head{
+      padding:14px 16px 12px;
+      border-bottom:1px dashed var(--line);
+      display:flex; justify-content:space-between; align-items:center;
+      background:linear-gradient(0deg, #fff, #fff), repeating-linear-gradient(90deg, var(--line) 0 6px, transparent 6px 12px);
+    }
+    .stub-head h2{
+      margin:0; font-family:"Space Grotesk",sans-serif; font-size:15px; font-weight:700; letter-spacing:-0.02em;
+    }
+    .stub-head span{
+      font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--muted); background:var(--concrete); padding:4px 8px; border-radius:999px;
+    }
+    .stub-body{padding:16px}
+    .qr-frame{
+      background:var(--ink);
+      border-radius:12px;
+      padding:12px;
+      display:grid; place-items:center;
+      min-height:322px;
+      position:relative;
+      overflow:hidden;
+    }
+    .qr-frame::before{
+      content:""; position:absolute; inset:0; opacity:0.06;
+      background-image: radial-gradient(circle at 1px 1px, #fff 1px, transparent 0);
+      background-size:16px 16px;
+    }
+    #qr{position:relative; display:grid; place-items:center; min-height:276px; width:100%}
+    #qr canvas{border-radius:10px; background:#fff; box-shadow:0 6px 18px rgba(0,0,0,0.25)}
+    #qr .empty{
+      color:#C2C8D6; font-family:"JetBrains Mono",monospace; font-size:12px; text-align:center; padding:24px; border:1px dashed rgba(255,255,255,0.2); border-radius:10px; width:100%;
+    }
+    .actions{display:flex; gap:10px; margin-top:14px}
+    .btn{
+      appearance:none; border:0; border-radius:10px; padding:10px 14px; font-weight:500; font-size:14px; cursor:pointer;
+      display:inline-flex; align-items:center; justify-content:center; gap:8px; line-height:1;
+      transition: transform 120ms ease, background 120ms ease, color 120ms ease, border-color 120ms ease;
+    }
+    .btn:active{transform:translateY(1px)}
+    .btn:focus-visible{outline:2px solid var(--cobalt); outline-offset:2px}
+    .btn-primary{background:var(--cobalt); color:#fff; flex:1}
+    .btn-primary:hover{background:#244ee0}
+    .btn-ghost{background:#fff; color:var(--ink); border:1px solid var(--line)}
+    .btn-ghost:hover{background:var(--concrete)}
+    .meta-row{
+      margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+      font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--muted);
+    }
+    .chip{border:1px solid var(--line); background:var(--chalk); padding:5px 8px; border-radius:999px; display:inline-flex; align-items:center; gap:6px}
+    .chip i{width:6px; height:6px; border-radius:50%; background:var(--ok)}
+    .chip.warn i{background:var(--signal)}
+    .chip.bad i{background:var(--rose)}
+    #linkWrap{margin-top:12px; border:1px solid var(--line); background:var(--chalk); border-radius:10px; padding:10px 12px; display:none}
+    #link{font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--ink); word-break:break-all}
+    .perforation{
+      height:10px; margin:0; background:
+        radial-gradient(circle, transparent 5px, #fff 6px) 0 0 / 20px 10px repeat-x,
+        linear-gradient(#fff,#fff);
+      border-top:1px solid var(--line); border-bottom:1px solid var(--line);
+    }
+    .stub-foot{padding:12px 16px; background:var(--chalk); font-size:12px; color:var(--muted)}
+    .stub-foot ul{margin:6px 0 0; padding-left:16px}
+    .stub-foot li{margin:3px 0}
+
+    /* transcript */
+    .panel{
+      background:var(--ink);
+      color:var(--chalk);
+      border-radius:var(--radius);
+      border:1px solid #1A2432;
+      overflow:hidden;
+      display:flex; flex-direction:column;
+      min-height:540px;
+      box-shadow: 0 1px 0 rgba(14,26,36,0.04), 0 8px 24px rgba(14,26,36,0.08);
+    }
+    .panel-head{
+      display:flex; align-items:center; justify-content:space-between; gap:12px;
+      padding:14px 16px; border-bottom:1px solid rgba(255,255,255,0.08);
+      background:linear-gradient(180deg, rgba(255,255,255,0.04), transparent);
+    }
+    .panel-head h2{margin:0; font-family:"Space Grotesk",sans-serif; font-size:15px; font-weight:700; letter-spacing:-0.02em; color:var(--chalk)}
+    .panel-head .right{display:flex; gap:8px; align-items:center}
+    .mono{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:0.02em}
+    .tag{padding:4px 8px; border-radius:999px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.06); color:#DDE1E7}
+    .presence{
+      display:flex; align-items:center; gap:8px; padding:10px 16px; border-bottom:1px solid rgba(255,255,255,0.06);
+      background:rgba(45,91,255,0.08);
+      font-size:12px; color:#C2C8D6;
+    }
+    .presence strong{color:var(--chalk); font-weight:500}
+    #msgs{
+      flex:1; overflow:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.02), transparent 120px),
+        repeating-linear-gradient(0deg, transparent 0 28px, rgba(255,255,255,0.03) 28px 29px);
+    }
+    .line{
+      display:grid; grid-template-columns: 86px 1fr; gap:12px; align-items:start;
+      padding:10px 12px; border-radius:10px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06);
+    }
+    .line.me{background:rgba(45,91,255,0.14); border-color:rgba(45,91,255,0.28)}
+    .line.system{background:transparent; border-style:dashed; color:#9AA0B6; justify-items:start; grid-template-columns:1fr}
+    .line .time{font-family:"JetBrains Mono",monospace; font-size:11px; color:#8E96AD; padding-top:2px}
+    .line .body{font-size:14px; color:var(--chalk); word-break:break-word; white-space:pre-wrap}
+    .line .who{font-weight:500; color:var(--chalk); margin-right:6px}
+    .line .body .flag{font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--signal); margin-left:6px}
+
+    .composer{
+      padding:12px 16px; border-top:1px solid rgba(255,255,255,0.08); background:rgba(0,0,0,0.16);
+      display:flex; flex-direction:column; gap:10px;
+    }
+    .input-row{display:flex; gap:10px; align-items:center}
+    #msgInput{
+      flex:1; background:#0A101A; color:var(--chalk); border:1px solid rgba(255,255,255,0.12); border-radius:10px;
+      padding:12px 14px; font-size:14px; outline:none;
+    }
+    #msgInput::placeholder{color:#6B7390}
+    #msgInput:focus{border-color:var(--cobalt); box-shadow:0 0 0 3px rgba(45,91,255,0.22)}
+    .send{
+      width:44px; height:44px; border-radius:10px; border:0; background:var(--cobalt); color:#fff; display:grid; place-items:center; cursor:pointer; flex:0 0 auto;
+    }
+    .send:hover{background:#244ee0}
+    .send:focus-visible{outline:2px solid var(--signal); outline-offset:2px}
+    .sub-actions{display:flex; gap:8px; flex-wrap:wrap}
+    .sub-actions button{
+      font-family:"JetBrains Mono",monospace; font-size:11px; padding:7px 10px; border-radius:999px;
+      border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:#DDE1E7; cursor:pointer;
+    }
+    .sub-actions button:hover{background:rgba(255,255,255,0.08)}
+    #debug{
+      font-family:"JetBrains Mono",monospace; font-size:11px; color:#8E96AD; background:rgba(0,0,0,0.24); border:1px solid rgba(255,255,255,0.08);
+      border-radius:10px; padding:10px 12px; max-height:120px; overflow:auto; white-space:pre-wrap; word-break:break-word;
+    }
+
+    /* footer */
+    .foot{
+      max-width:1120px; margin:0 auto; padding:0 20px 36px; color:var(--muted); font-size:12px;
+      display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;
+    }
+    .foot code{font-family:"JetBrains Mono",monospace; background:#fff; border:1px solid var(--line); padding:2px 6px; border-radius:6px}
+  </style>
 </head>
 <body>
-<header>
-  <strong>Secure Chat — Desktop</strong>
-  <span class="muted">QR login · 90s · single-use · burned on claim</span>
-</header>
-<main>
-  <div class="grid">
-    <section class="card">
-      <h3 style="margin:.2rem 0 .6rem">1. Generate QR</h3>
-      <p class="muted">Token is opaque 32-byte random, never a JWT. Stored as SHA-256 hash. Expires in 90s, burned after claim.</p>
-      <button id="gen">Generate QR</button>
-      <span id="status" class="muted" style="margin-left:.5rem"></span>
-      <div id="qr" style="margin:1rem 0;min-height:300px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:16px;padding:12px"></div>
-      <div id="linkWrap" class="muted" style="display:none"><div>Link (for demo copy):</div><code id="link"></code></div>
-      <details style="margin-top:.75rem"><summary>How this stays safe</summary><ul class="muted">
-        <li>HTTPS/WSS only, HSTS, CSP, no-store.</li><li>IP rate-limited: 5 QR/min/IP.</li><li>Desktop holds optional WS for push; falls back to poll.</li>
-      </ul></details>
-    </section>
-    <section class="card">
-      <h3 style="margin:.2rem 0 .6rem">2. Chat</h3>
-      <div class="muted" id="me">Not logged in</div>
-      <div id="msgs"></div>
-      <div style="display:flex;gap:.5rem;margin-top:.5rem">
-        <input id="msgInput" placeholder="Type a message (max 2000 chars, HTML escaped)" maxlength="2000" />
-        <button id="send">Send</button>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="mark">◐</div>
+        <div>
+          <h1>Secure QR Chat</h1>
+          <p>Station · ephemeral link · burned on claim</p>
+        </div>
       </div>
-      <div style="display:flex;gap:.5rem;margin-top:.5rem">
-        <button id="historyBtn" style="background:#232836">Load history (REST)</button>
-        <button id="clearBtn" style="background:#232836">Clear</button>
+      <div class="top-meta">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span>WSS only · 90s · single-use</span>
+        <a href="/mobile" style="color:var(--chalk); text-decoration:none; border:1px solid rgba(255,255,255,0.18); padding:6px 10px; border-radius:999px; font-size:12px">Open mobile key →</a>
       </div>
-      <pre id="debug" style="background:#0f1115;border:1px solid var(--line);border-radius:12px;padding:.5rem;max-height:160px;overflow:auto" class="muted"></pre>
-    </section>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div class="strip">
+      <p><strong>How it works:</strong> Generate a stub. Scan the QR with your already-authenticated phone. Confirm the check-sheet on mobile — device, city, time — then tap approve. Desktop burns the ticket and mints a 1-hour pass. Nothing to steal, nothing to replay.</p>
+      <div class="mono" style="color:var(--muted)">Room: <span style="color:var(--ink); background:var(--signal); padding:2px 6px; border-radius:6px; font-weight:500">general</span> &nbsp; <span style="opacity:0.6">·</span> &nbsp; <a href="#transcript">Go to transcript ↓</a></div>
+    </div>
+
+    <div class="grid">
+      <!-- QR stub -->
+      <section class="stub" aria-labelledby="stub-title">
+        <div class="stub-head">
+          <h2 id="stub-title">Detachable link</h2>
+          <span id="status">Idle</span>
+        </div>
+        <div class="stub-body">
+          <div class="qr-frame">
+            <div id="qr"><div class="empty">No stub yet.<br>Press Generate to create a 90-second link.</div></div>
+          </div>
+          <div class="actions">
+            <button id="gen" class="btn btn-primary"><span>Generate</span> <span aria-hidden="true">↻</span></button>
+            <button id="clearBtn" class="btn btn-ghost" title="Clear transcript">Clear</button>
+          </div>
+          <div class="meta-row">
+            <span id="timer" class="chip"><i></i> <span id="timerText">No active link</span></span>
+            <span class="chip warn"><i></i> Hash at rest · SHA-256</span>
+          </div>
+          <div id="linkWrap"><div class="mono" style="font-size:11px; color:var(--muted); margin-bottom:4px">Copy link (for testing):</div><code id="link"></code></div>
+        </div>
+        <div class="perforation" aria-hidden="true"></div>
+        <div class="stub-foot">
+          <strong style="font-family:Space Grotesk,sans-serif; font-size:12px; color:var(--ink)">Check-sheet shows on mobile:</strong>
+          <ul>
+            <li>Approximate city, browser, time</li>
+            <li>90-second expiry, auto-burn</li>
+            <li>Single tap to approve, no auto-trust</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- transcript -->
+      <section class="panel" id="transcript" aria-labelledby="transcript-title">
+        <div class="panel-head">
+          <h2 id="transcript-title">Transcript</h2>
+          <div class="right">
+            <span class="mono tag" id="me">Not logged in</span>
+            <span class="mono tag" id="roomTag"># general</span>
+          </div>
+        </div>
+        <div id="presence" class="presence" style="display:none"></div>
+        <div id="msgs" role="log" aria-live="polite" aria-relevant="additions">
+          <div class="line system"><div>Generate a stub on the left, approve on your phone, then type here. Messages are escaped server-side — even <code>&lt;script&gt;</code> renders as text.</div></div>
+        </div>
+        <div class="composer">
+          <div class="input-row">
+            <input id="msgInput" placeholder="Write a message — 2000 char max · HTML is escaped" maxlength="2000" autocomplete="off" />
+            <button id="send" class="send" aria-label="Send message">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M22 2L11 13" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+          <div class="sub-actions">
+            <button id="historyBtn" type="button">Load history</button>
+            <button id="exportBtn" type="button">Copy transcript</button>
+            <span class="mono" style="color:#8E96AD; padding:7px 0;">Rate: 20 / 10s · CSP + HSTS · no-store</span>
+          </div>
+          <pre id="debug" aria-label="Debug log"></pre>
+        </div>
+      </section>
+    </div>
   </div>
-  <section class="card" style="margin-top:1.25rem">
-    <h3>Why this design?</h3>
-    <p class="muted">See README for full threat model. Highlights: opaque token hashed at rest, single DO per token for burn atomicity, alarms for GC, JWT short-lived (1h), server-side membership & sanitization, moderation hook, sliding-window rate limits.</p>
-    <p><a href="/mobile" style="color:var(--accent)">Open mobile approve page →</a></p>
-  </section>
-</main>
-<script type="module">
-import "/client/desktop.js" assert { type: "json" };
-</script>
-<script type="module" src="/client/desktop.js"></script>
+
+  <div class="foot">
+    <div>Built for Workers + Durable Objects. One DO per room, one per ticket. <code>POST /api/auth/qr/create → /mobile?token=… → /approve → /claim (burn)</code></div>
+    <div class="mono">Ink + Chalk + Cobalt + Signal · Space Grotesk / IBM Plex</div>
+  </div>
+
+  <script type="module" src="/client/desktop.js"></script>
 </body>
 </html>

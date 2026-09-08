@@ -3,50 +3,132 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Secure Chat — Mobile Approve</title>
+  <title>Secure QR Chat — Mobile Key</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
-    :root{--bg:#0f1115;--card:#171a22;--line:#232836;--text:#e6e8ef;--muted:#9aa0b2;--accent:#6d7bff;--bad:#ef4444}
-    *{box-sizing:border-box} body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--text)}
-    header{padding:1rem;border-bottom:1px solid var(--line)} main{max-width:640px;margin:0 auto;padding:1.25rem}
-    .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:1rem;margin:1rem 0}
-    button{background:var(--accent);color:#fff;border:0;padding:.6rem .9rem;border-radius:10px;cursor:pointer;font-weight:600}
-    button:disabled{opacity:.5} button.danger{background:var(--bad)} button.ghost{background:#232836}
-    input{width:100%;padding:.6rem;border-radius:10px;border:1px solid var(--line);background:#0f1115;color:var(--text)}
-    pre{background:#0f1115;border:1px solid var(--line);border-radius:12px;padding:.6rem;overflow:auto}
-    ul{padding-left:1.1rem} li{margin:.25rem 0}
-    .muted{color:var(--muted);font-size:.9rem}
+    :root{--chalk:#FCFCF9;--ink:#0E1A24;--line:#DDE1E7;--concrete:#E9EAF0;--cobalt:#2D5BFF;--signal:#FFD60A;--rose:#FF4D6A;--muted:#6B7280;--ok:#0E7A4C;--radius:14px}
+    *{box-sizing:border-box} body{margin:0; font-family:"IBM Plex Sans",sans-serif; background:var(--chalk); color:var(--ink); -webkit-font-smoothing:antialiased; line-height:1.45}
+    .top{position:sticky; top:0; z-index:10; background:var(--ink); color:var(--chalk); border-bottom:4px solid var(--cobalt)}
+    .top-inner{max-width:640px; margin:0 auto; padding:14px 20px; display:flex; align-items:center; justify-content:space-between; gap:12px}
+    .brand{display:flex; gap:12px; align-items:center}
+    .mark{width:28px; height:28px; border-radius:8px; background:var(--signal); display:grid; place-items:center; font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--ink)}
+    .brand h1{margin:0; font-family:"Space Grotesk",sans-serif; font-size:16px; font-weight:700; letter-spacing:-0.02em; line-height:1}
+    .brand p{margin:2px 0 0; font-family:"JetBrains Mono",monospace; font-size:11px; color:#9AA0B6}
+    .top a{color:var(--chalk); text-decoration:none; border:1px solid rgba(255,255,255,0.18); padding:6px 10px; border-radius:999px; font-size:12px}
+    .wrap{max-width:640px; margin:0 auto; padding:22px 20px 40px}
+    .card{background:#fff; border:1px solid var(--line); border-radius:var(--radius); padding:16px; margin:16px 0; box-shadow:0 1px 0 rgba(14,26,36,0.04), 0 8px 24px rgba(14,26,36,0.05)}
+    .card h2{margin:0 0 6px; font-family:"Space Grotesk",sans-serif; font-size:15px; font-weight:700; letter-spacing:-0.02em}
+    .card p{margin:0 0 12px; font-size:13px; color:var(--muted)}
+    .mono{font-family:"JetBrains Mono",monospace; font-size:11px}
+    .field{display:flex; flex-direction:column; gap:8px; margin:10px 0}
+    input[type=text]{width:100%; padding:11px 12px; border-radius:10px; border:1px solid var(--line); background:var(--chalk); font-size:14px; outline:none}
+    input:focus{border-color:var(--cobalt); box-shadow:0 0 0 3px rgba(45,91,255,0.18)}
+    .row{display:flex; gap:10px}
+    .btn{appearance:none; border:0; border-radius:10px; padding:11px 14px; font-weight:500; font-size:14px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:8px; transition:transform 120ms ease, background 120ms ease}
+    .btn:active{transform:translateY(1px)} .btn:focus-visible{outline:2px solid var(--cobalt); outline-offset:2px}
+    .btn-primary{background:var(--cobalt); color:#fff; flex:1} .btn-primary:hover{background:#244ee0} .btn-primary:disabled{opacity:0.45; cursor:not-allowed}
+    .btn-ghost{background:#fff; color:var(--ink); border:1px solid var(--line)} .btn-ghost:hover{background:var(--concrete)}
+    .btn-danger{background:var(--rose); color:#fff} .btn-danger:hover{background:#e54860}
+    pre{background:var(--ink); color:#DDE1E7; border-radius:10px; padding:12px; overflow:auto; border:1px solid #1A2432; font-family:"JetBrains Mono",monospace; font-size:11px; white-space:pre-wrap; word-break:break-word}
+    .sheet{border:1px solid var(--line); border-radius:12px; overflow:hidden}
+    .sheet-head{padding:10px 14px; background:var(--chalk); border-bottom:1px dashed var(--line); display:flex; justify-content:space-between; align-items:center}
+    .sheet-head strong{font-family:"Space Grotesk",sans-serif; font-size:13px}
+    .sheet-head span{font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--muted); background:#fff; border:1px solid var(--line); padding:3px 8px; border-radius:999px}
+    .sheet-body{padding:14px; background:#fff}
+    #details{margin:0; padding-left:18px; font-size:13px}
+    #details li{margin:6px 0}
+    .check{display:flex; gap:10px; align-items:flex-start; background:var(--chalk); border:1px solid var(--line); border-radius:10px; padding:12px; margin:12px 0}
+    .check input{margin-top:2px}
+    .check label{font-size:13px; color:var(--ink)}
+    .confirm{display:none; border:1px solid #F3D98A; background:#FFFDF0; border-radius:12px; padding:14px; margin-top:12px}
+    .confirm.open{display:block}
+    .confirm h3{margin:0 0 8px; font-family:"Space Grotesk",sans-serif; font-size:14px; color:#7A5A00}
+    .pill{display:inline-flex; align-items:center; gap:6px; font-family:"JetBrains Mono",monospace; font-size:11px; background:#fff; border:1px solid #F1D17A; padding:4px 8px; border-radius:999px; color:#7A5A00}
+    .pill i{width:6px; height:6px; border-radius:50%; background:var(--signal)}
+    .foot{max-width:640px; margin:0 auto; padding:0 20px 32px; color:var(--muted); font-size:12px; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap}
   </style>
 </head>
 <body>
-<header><strong>Secure Chat — Mobile Approve</strong> <span class="muted">Confirm before you trust</span></header>
-<main>
-  <section class="card">
-    <h3>Step 1 · Get a mobile session (dev)</h3>
-    <p class="muted">In production this is your real IdP session (cookie/OIDC). For demo we mint a short JWT here.</p>
-    <input id="userId" placeholder="userId (e.g. alice)" value="alice" />
-    <div style="margin:.6rem 0"><button id="login">Mint mobile session</button></div>
-    <pre id="loginOut" class="muted">No session yet</pre>
-  </section>
-  <section class="card">
-    <h3>Step 2 · Scan / paste token</h3>
-    <p class="muted">Paste the <code>token</code> from the desktop QR URL (<code>?token=...</code>), or open the QR link directly on this device.</p>
-    <input id="token" placeholder="opaque token" />
-    <div style="margin:.6rem 0;display:flex;gap:.5rem"><button id="preview">Preview login attempt</button><button id="paste" class="ghost">Paste</button></div>
-    <pre id="previewOut" class="muted"></pre>
-    <div id="confirm" style="display:none;border:1px solid #7f1d1d;background:#1a0f12;border-radius:12px;padding:1rem;margin-top:.75rem">
-      <p style="color:#fecaca;margin:.2rem 0  .6rem"><strong>⚠️ Confirm this login attempt</strong></p>
-      <ul id="details"></ul>
-      <label style="display:flex;gap:.5rem;align-items:center;margin:.6rem 0"><input type="checkbox" id="ack" style="width:auto"/> I verify this is my desktop, I initiated this login, and the location/time look correct.</label>
-      <div style="display:flex;gap:.5rem"><button id="approve" disabled>✓ Approve</button><button id="deny" class="danger">✕ Deny</button></div>
-      <p class="muted">On approval the desktop token is marked <em>approved</em> but still must be <em>burned</em> by the desktop claiming it (single-use, no replay). You can deny to instantly revoke.</p>
+  <header class="top">
+    <div class="top-inner">
+      <div class="brand">
+        <div class="mark">◐</div>
+        <div><h1>Mobile key</h1><p>Confirm before you trust</p></div>
+      </div>
+      <a href="/desktop">Station →</a>
     </div>
-  </section>
-  <section class="card muted">
-    <h3 style="color:var(--text)">What you’re confirming</h3>
-    <ul><li>Device/browser fingerprint (UA, IP city/country, accept-language)</li><li>Timestamp & expiry (90s window)</li><li>That you tapped explicitly — no auto-approve</li></ul>
-    <p><a href="/desktop" style="color:var(--accent)">Back to desktop →</a></p>
-  </section>
-</main>
-<script type="module" src="/client/mobile.js"></script>
+  </header>
+
+  <div class="wrap">
+    <div class="card" style="border-left:4px solid var(--cobalt)">
+      <h2>1 · Establish your mobile session</h2>
+      <p>In production this is your real IdP session. For the demo we mint a 1-hour JWT here and store it locally.</p>
+      <div class="field">
+        <label class="mono" for="userId" style="color:var(--muted)">User id</label>
+        <input id="userId" type="text" placeholder="e.g. alice" value="alice" autocomplete="off" />
+      </div>
+      <div class="row">
+        <button id="login" class="btn btn-primary">Mint session</button>
+        <button id="clearSession" class="btn btn-ghost">Clear</button>
+      </div>
+      <pre id="loginOut" style="margin-top:12px">No session yet</pre>
+    </div>
+
+    <div class="card">
+      <h2>2 · Inspect the link</h2>
+      <p>Paste the <code style="font-family:JetBrains Mono,monospace; background:var(--chalk); border:1px solid var(--line); padding:1px 6px; border-radius:6px">token</code> from the station QR (<code style="font-family:JetBrains Mono,monospace">?token=…</code>), or open the QR link directly on this device — it autofills.</p>
+      <div class="field">
+        <label class="mono" for="token" style="color:var(--muted)">Opaque token</label>
+        <div class="row">
+          <input id="token" type="text" placeholder="Paste token or full link" autocomplete="off" style="flex:1" />
+          <button id="paste" class="btn btn-ghost" type="button">Paste</button>
+        </div>
+      </div>
+      <div class="row">
+        <button id="preview" class="btn btn-primary">Inspect</button>
+      </div>
+      <pre id="previewOut" style="margin-top:12px">Awaiting token…</pre>
+
+      <div id="confirm" class="confirm" role="dialog" aria-labelledby="confirmTitle" aria-modal="false">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px">
+          <h3 id="confirmTitle">Check-sheet — verify this is you</h3>
+          <span class="pill"><i></i> 90s · single-use</span>
+        </div>
+        <div class="sheet" style="margin-top:10px">
+          <div class="sheet-head"><strong>Station fingerprint</strong><span id="sheetStatus">Pending</span></div>
+          <div class="sheet-body">
+            <ul id="details"></ul>
+          </div>
+        </div>
+        <div class="check">
+          <input id="ack" type="checkbox" />
+          <label for="ack">I initiated this login on my station, the city/time looks correct, and I understand approving will burn this link immediately.</label>
+        </div>
+        <div class="row">
+          <button id="approve" class="btn btn-primary" disabled>Approve</button>
+          <button id="deny" class="btn btn-danger">Deny</button>
+        </div>
+        <p class="mono" style="margin:10px 0 0; color:var(--muted)">On deny the ticket is marked <em>denied</em> and the station is notified instantly.</p>
+      </div>
+    </div>
+
+    <div class="card" style="background:var(--chalk)">
+      <h2>What you’re confirming</h2>
+      <ul style="margin:6px 0 0; padding-left:18px; font-size:13px; color:var(--muted)">
+        <li>Device & browser, approximate city/country, language</li>
+        <li>Creation time and seconds remaining</li>
+        <li>That you tapped explicitly — no auto-approve exists</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div>Ink + Chalk + Cobalt + Signal · Space Grotesk / IBM Plex</div>
+    <div class="mono">Burn on claim · hash at rest · 256-bit</div>
+  </div>
+
+  <script type="module" src="/client/mobile.js"></script>
 </body>
 </html>
