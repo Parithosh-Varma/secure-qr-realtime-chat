@@ -43,8 +43,7 @@ enabled = true
 # MODERATION_KEY   — optional external moderation API key
 
 # ---- Limits & Safety ----
-[limits]
-cpu_ms = 50
+# [limits] removed for Free plan compatibility; paid plans can set cpu_ms = 50
 
 # Uncomment to pin to a zone / route when deploying:
 # [[routes]]

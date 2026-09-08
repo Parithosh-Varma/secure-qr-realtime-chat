@@ -209,7 +209,7 @@ export default {
       }
 
       // ---- QR: lightweight WS waiter (desktop) ----
-      if (path === "/api/auth/qr/ws" && req.headers.get("Upgrade") === "websocket") {
+      if (path === "/api/auth/qr/ws" && req.headers.get("Upgrade")?.toLowerCase() === "websocket") {
         const token = url.searchParams.get("token") || "";
         const v = validateTokenFormat(token);
         if (!v.ok) return json({ error: v.error }, { status: 400 }, req, env);
@@ -340,17 +340,32 @@ export default {
       const roomWsMatch2 = path.match(/^\/api\/room\/([^/]+)\/?$/);
       let roomId: string | null = null;
       if (roomWsMatch) roomId = roomWsMatch[1];
-      else if (roomWsMatch2 && req.headers.get("Upgrade") === "websocket") roomId = roomWsMatch2[1];
+      else if (roomWsMatch2 && req.headers.get("Upgrade")?.toLowerCase() === "websocket") roomId = roomWsMatch2[1];
 
-      if (roomId && req.headers.get("Upgrade") === "websocket") {
+      if (roomId && req.headers.get("Upgrade")?.toLowerCase() === "websocket") {
         // Forward to ChatRoom DO — DO will validate JWT + membership + rate limits
         const id = env.CHAT_ROOM.idFromName(roomId);
         const stub = env.CHAT_ROOM.get(id);
-        // Preserve auth header + query token
-        const forwardUrl = `https://room/ws?roomId=${encodeURIComponent(roomId)}`;
+        // Preserve auth header + query token (DO checks both Bearer and ?token)
+        const qToken = url.searchParams.get("token");
+        const forwardUrl = `https://room/ws?roomId=${encodeURIComponent(roomId)}${qToken ? `&token=${encodeURIComponent(qToken)}` : ""}`;
         // Clone request with new URL but keep headers
         const forwardReq = new Request(forwardUrl, req);
         return stub.fetch(forwardReq);
+      }
+
+      // ---- Chat: message via REST (alternative to WS) ----
+      const msgMatch = path.match(/^\/api\/room\/([^/]+)\/message\/?$/);
+      if (msgMatch && method === "POST") {
+        const rid = msgMatch[1];
+        const id = env.CHAT_ROOM.idFromName(rid);
+        const stub = env.CHAT_ROOM.get(id);
+        // Forward body + auth header
+        const bodyText = await req.text();
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const auth = req.headers.get("Authorization");
+        if (auth) headers["Authorization"] = auth;
+        return stub.fetch(`https://room/message`, { method: "POST", headers, body: bodyText });
       }
 
       // ---- Chat: history (REST) ----
@@ -399,12 +414,6 @@ export default {
 };
 
 async function desktopFallbackHtml(): Promise<string> {
-  // Inline the public/desktop.html at build time ideally; for Worker we embed a minimal fallback
-  try {
-    // @ts-ignore — will be replaced by actual file read if using assets
-    const { readFile } = await import("node:fs/promises").catch(() => ({ readFile: null }));
-    if (readFile) return "";
-  } catch {}
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Secure Chat — Desktop</title>
