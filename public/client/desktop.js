@@ -60,8 +60,8 @@ function setGated(on) {
   document.body.classList.toggle("gated", on);
   const qrView = document.getElementById("qrView");
   const chatView = document.getElementById("chatView");
-  if (qrView) qrView.style.display = on ? "grid" : "none";
-  if (chatView) chatView.style.display = on ? "none" : "grid";
+  if (qrView) { qrView.style.display = on ? "grid" : "none"; qrView.classList.toggle("hide", !on); }
+  if (chatView) { chatView.style.display = on ? "none" : "grid"; chatView.classList.toggle("hide", on); }
 }
 function setStatus(t) { if (statusEl) statusEl.textContent = t; }
 function setTimer() {
