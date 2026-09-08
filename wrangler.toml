@@ -11,6 +11,7 @@ QR_TTL_SECONDS = "90"
 JWT_TTL_SECONDS = "3600"
 MAX_MESSAGE_LENGTH = "2000"
 MAX_ROOM_HISTORY = "100"
+ALLOWED_ORIGIN = "https://qrchat.pages.dev,https://*.qrchat.pages.dev,https://hush-link.pages.dev,https://*.hush-link.pages.dev,https://hushx.pages.dev,https://*.hushx.pages.dev,https://qrchat-bbl.pages.dev,http://localhost:8787,http://127.0.0.1:8787"
 
 # ---- Durable Objects ----
 # 1) ChatRoom: one instance per chat room, owns WebSockets + message history (strong consistency)

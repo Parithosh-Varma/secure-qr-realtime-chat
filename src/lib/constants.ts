@@ -25,10 +25,11 @@ export const ALLOWED_ORIGINS = [
 
 export const CSP_VALUE = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com", // QR lib + inline demo only; tighten with nonce/hash in prod
-  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com", // no external QR CDN — vendored /client/qrcode.min.js (same-origin)
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob:",
-  "connect-src 'self' wss: https:",
+  "connect-src 'self' https: wss:",
   "frame-ancestors 'none'",
   "base-uri 'none'",
   "form-action 'self'",

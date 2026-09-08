@@ -1,6 +1,12 @@
-// Secure Chat — minimal shell. Flows unchanged: opaque ticket → approve → burn → JWT → WSS.
+// Secure Chat — minimal shell. Gate: QR only until scanned + connected, then chat UI.
+// Flows unchanged: opaque ticket → approve → burn → JWT → WSS.
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
+
+// API base: same-origin by default (Worker-served). Pages sets window.__API_BASE__ via /config.js.
+const API_BASE = (typeof window !== "undefined" && window.__API_BASE__ ? window.__API_BASE__ : "").replace(/\/$/, "");
+const api = (p) => `${API_BASE}${p}`;
+const wsBase = () => (API_BASE ? API_BASE.replace(/^http/, "ws") : `${location.protocol}//${location.host}`);
 
 const statusEl = $("#status");
 const timerText = $("#timerText");
@@ -26,6 +32,7 @@ const RING_C = 97.4;
 
 let pollTimer = null, countdownTimer = null, ws = null, chatWs = null;
 let currentToken = null, expiresAt = 0;
+let gated = true;
 let jwt = localStorage.getItem("chat_jwt") || "";
 let identity = null;
 try { identity = JSON.parse(localStorage.getItem("chat_identity") || "null"); } catch { identity = null; }
@@ -45,6 +52,10 @@ function log(...a) {
     debugEl.textContent += a.map((x) => typeof x === "string" ? x : JSON.stringify(x)).join(" ") + "\n";
   }
   console.log(...a);
+}
+function setGated(on) {
+  gated = on;
+  document.body.classList.toggle("gated", on);
 }
 function setStatus(t) { if (statusEl) statusEl.textContent = t; }
 function setTimer() {
@@ -71,24 +82,16 @@ function updateSend() {
   if (sendBtn && inputEl) sendBtn.disabled = !(chatWs && chatWs.readyState === 1 && inputEl.value.trim());
 }
 function openModal() { modal?.classList.add("open"); }
-function closeModal() { modal?.classList.remove("open"); }
+function closeModal() {
+  if (gated) return; // gate is non-dismissable: scan + connect first
+  modal?.classList.remove("open");
+}
 function updateHero() {
   if (heroEl && msgsEl) heroEl.style.display = msgsEl.querySelector(".row") ? "none" : "";
 }
 
 function renderQr(el, text) {
-  // Preferred: node-qrcode UMD (QRCode.toCanvas) when available.
-  try {
-    if (typeof QRCode !== "undefined" && QRCode && QRCode.toCanvas) {
-      const c = document.createElement("canvas");
-      el.innerHTML = "";
-      el.appendChild(c);
-      const p = QRCode.toCanvas(c, text, { width: 216, margin: 1 });
-      if (p && typeof p.then === "function") return p.then(() => true, () => false);
-      return Promise.resolve(true);
-    }
-  } catch (e) { console.warn("QRCode.toCanvas failed, trying fallback", e); }
-  // Fallback: qrcode-generator (global `qrcode`) — reliable on jsDelivr.
+  // Vendored qrcode-generator (same-origin /client/qrcode.min.js) — primary path.
   try {
     if (typeof qrcode !== "undefined") {
       const qr = qrcode(0, "M");
@@ -104,7 +107,18 @@ function renderQr(el, text) {
       }
       return Promise.resolve(true);
     }
-  } catch (e) { console.warn("qrcode-generator render failed", e); }
+  } catch (e) { console.warn("qrcode render failed", e); }
+  // Secondary: node-qrcode UMD if ever present.
+  try {
+    if (typeof QRCode !== "undefined" && QRCode && QRCode.toCanvas) {
+      const c = document.createElement("canvas");
+      el.innerHTML = "";
+      el.appendChild(c);
+      const p = QRCode.toCanvas(c, text, { width: 216, margin: 1 });
+      if (p && typeof p.then === "function") return p.then(() => true, () => false);
+      return Promise.resolve(true);
+    }
+  } catch (e) { console.warn("QRCode.toCanvas failed", e); }
   return Promise.resolve(false);
 }
 
@@ -115,7 +129,14 @@ async function gen() {
   if (countdownTimer) clearInterval(countdownTimer);
   if (ws) try { ws.close(); } catch {}
   openModal();
-  const res = await fetch("/api/auth/qr/create", { method: "POST" });
+  let res;
+  try {
+    res = await fetch(api("/api/auth/qr/create"), { method: "POST" });
+  } catch {
+    setStatus("Offline");
+    if (qrEl) qrEl.innerHTML = '<div class="empty">Network error — retry</div>';
+    return;
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     log("create failed", data);
@@ -124,22 +145,28 @@ async function gen() {
     return;
   }
   currentToken = data.token; expiresAt = data.expiresAt;
+  // QR encodes Pages origin (so phone lands on Pages /mobile, not Worker). data.url is Worker origin when called via API_BASE.
+  const qrText = API_BASE ? `${location.origin}/mobile?token=${encodeURIComponent(data.token)}` : data.url;
   setStatus("Scan with mobile");
   setTimer();
   countdownTimer = setInterval(setTimer, 400);
   if (qrEl) {
     qrEl.innerHTML = "";
-    const ok = await renderQr(qrEl, data.url);
-    if (!ok) qrEl.textContent = data.url;
+    const ok = await renderQr(qrEl, qrText);
+    if (!ok) {
+      const d = document.createElement("div");
+      d.className = "qr-fallback";
+      d.textContent = qrText;
+      qrEl.appendChild(d);
+    }
   }
-  if (linkEl && linkWrap) { linkEl.textContent = data.url; linkWrap.style.display = "block"; }
+  if (linkEl && linkWrap) { linkEl.textContent = qrText; linkWrap.style.display = "block"; }
   tryWs(data.token);
   startPolling(data.token);
 }
 function tryWs(token) {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
   try {
-    ws = new WebSocket(`${proto}//${location.host}/api/auth/qr/ws?token=${encodeURIComponent(token)}`);
+    ws = new WebSocket(`${wsBase()}/api/auth/qr/ws?token=${encodeURIComponent(token)}`);
     ws.onmessage = (e) => {
       try {
         const m = JSON.parse(e.data);
@@ -153,7 +180,9 @@ function tryWs(token) {
 function startPolling(token) {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
-    const res = await fetch(`/api/auth/qr/status?token=${encodeURIComponent(token)}`);
+    let res;
+    try { res = await fetch(api(`/api/auth/qr/status?token=${encodeURIComponent(token)}`)); }
+    catch { return; }
     const data = await res.json().catch(() => ({}));
     if (data.status === "approved") { setStatus("Approved"); claim(token); }
     if (data.status === "denied") { setStatus("Denied"); cleanup(); }
@@ -162,7 +191,10 @@ function startPolling(token) {
 }
 async function claim(token) {
   cleanup();
-  const res = await fetch("/api/auth/qr/claim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+  let res;
+  try {
+    res = await fetch(api("/api/auth/qr/claim"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+  } catch { setStatus("Offline"); return; }
   const data = await res.json().catch(() => ({}));
   if (res.ok && data.token) {
     jwt = data.token; identity = data.identity;
@@ -172,7 +204,8 @@ async function claim(token) {
     setStatus("Linked");
     if (timerText) timerText.textContent = "Burned";
     toast(`Linked as ${identity.userId}`);
-    setTimeout(closeModal, 500);
+    setGated(false); // reveal the UI — scanned + connected
+    modal?.classList.remove("open");
     connectChat(currentRoom);
   } else setStatus("Claim failed");
 }
@@ -190,9 +223,8 @@ function connectChat(roomId = "general") {
   if (chatWs) try { chatWs.close(); } catch {}
   msgsEl.innerHTML = "";
   updateHero();
-  if (!jwt) { appendSystem("Link this device to join."); renderMe(); return; }
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  chatWs = new WebSocket(`${proto}//${location.host}/api/room/${encodeURIComponent(roomId)}/ws?token=${encodeURIComponent(jwt)}`);
+  if (!jwt) { setGated(true); openModal(); gen(); return; }
+  chatWs = new WebSocket(`${wsBase()}/api/room/${encodeURIComponent(roomId)}/ws?token=${encodeURIComponent(jwt)}`);
   chatWs.onopen = () => renderMe();
   chatWs.onmessage = (e) => {
     try {
@@ -268,7 +300,14 @@ $("#newChatBtn")?.addEventListener("click", () => { msgsEl.innerHTML = ""; updat
 $("#menuBtn")?.addEventListener("click", () => $("#sidebar")?.classList.add("open"));
 $$(".room").forEach((b) => b.addEventListener("click", () => { connectChat(b.dataset.room); $("#sidebar")?.classList.remove("open"); }));
 
+// Boot: linked sessions go straight to chat; everyone else sees ONLY the QR gate.
 renderMe();
 setTimer();
-if (jwt && identity) setTimeout(() => connectChat(currentRoom), 400);
-else appendSystem("Link this device to join.");
+if (jwt && identity) {
+  setGated(false);
+  setTimeout(() => connectChat(currentRoom), 400);
+} else {
+  setGated(true);
+  appendSystem("Link this device to join.");
+  gen();
+}

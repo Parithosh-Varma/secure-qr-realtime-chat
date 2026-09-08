@@ -20,7 +20,11 @@ export function securityHeaders(origin?: string | null): Record<string, string> 
 export function corsHeaders(req: Request, env: { ALLOWED_ORIGIN?: string }): Record<string, string> {
   const origin = req.headers.get("Origin");
   const allowed = env.ALLOWED_ORIGIN?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
-  const isAllowed = origin && (allowed.includes(origin) || allowed.includes("*"));
+  const isAllowed =
+    origin &&
+    (allowed.includes(origin) ||
+      allowed.includes("*") ||
+      allowed.some((a) => a.includes("*") && originMatches(origin, a)));
   if (isAllowed && origin) {
     return {
       "Access-Control-Allow-Origin": origin,
@@ -47,6 +51,22 @@ export function json(data: unknown, init: ResponseInit = {}, req?: Request, env?
   for (const [k, v] of Object.entries(securityHeaders())) headers.set(k, v);
   if (req && env) for (const [k, v] of Object.entries(corsHeaders(req, env))) headers.set(k, v);
   return new Response(JSON.stringify(data), { ...init, headers });
+}
+
+function originMatches(origin: string, pattern: string): boolean {
+  // pattern like https://*.qrchat.pages.dev
+  try {
+    const o = new URL(origin);
+    const p = pattern.replace(/^https:\/\/\*\./, "https://");
+    // for wildcard, allow any subdomain of base
+    if (pattern.includes("*.")) {
+      const base = pattern.split("*.")[1]; // e.g. qrchat.pages.dev
+      return o.hostname === base || o.hostname.endsWith("." + base);
+    }
+    return origin === pattern;
+  } catch {
+    return false;
+  }
 }
 
 export function requireHttps(req: Request): Response | null {
