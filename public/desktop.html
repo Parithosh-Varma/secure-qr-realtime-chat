@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Secure Chat — general</title>
+  <title>Secure Chat — private</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -19,22 +19,14 @@
     body{margin:0; background:var(--void); color:var(--txt); font-family:"Inter",system-ui,sans-serif; font-size:15px; line-height:1.55; overflow:hidden; -webkit-font-smoothing:antialiased}
     :focus-visible{outline:2px solid var(--aura); outline-offset:2px}
     .mono{font-family:"JetBrains Mono",monospace}
-    .app{display:grid; grid-template-columns:240px 1fr; height:100dvh}
-    /* sidebar — rooms + identity only */
+    .app{display:grid; grid-template-columns:220px 1fr; height:100dvh}
+    /* sidebar — identity only (2-person, no rooms list) */
     .side{background:var(--soot); border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0}
     .side-top{padding:14px 12px 6px; display:flex; flex-direction:column; gap:10px}
     .logo{display:flex; align-items:center; gap:10px; padding:2px 6px}
     .mark{width:30px; height:30px; border-radius:50%; background:#fff; color:#000; display:grid; place-items:center; font-weight:700; font-size:15px; font-family:"Inter Tight",sans-serif}
     .logo b{font-family:"Inter Tight",sans-serif; font-size:14px; font-weight:600}
-    .new-btn{border:1px solid var(--line); background:transparent; color:var(--txt); border-radius:10px; padding:9px 12px; font-size:13.5px; font-weight:500; cursor:pointer; display:flex; gap:8px; align-items:center; width:100%}
-    .new-btn:hover{background:var(--raised)}
-    .side-scroll{flex:1; overflow:auto; padding:6px 12px}
-    .side-label{font-size:11.5px; font-weight:600; color:var(--dim); padding:8px 6px 4px}
-    .room{width:100%; text-align:left; border:0; background:transparent; color:var(--mut); border-radius:10px; padding:8px 10px; font-size:13.5px; cursor:pointer; display:flex; gap:9px; align-items:center}
-    .room:hover{background:var(--raised); color:var(--txt)}
-    .room.active{background:var(--raised-2); color:var(--txt)}
-    .room .hash{color:var(--dim)}
-    .side-foot{border-top:1px solid var(--line); padding:12px}
+    .side-foot{border-top:1px solid var(--line); padding:12px; margin-top:auto}
     .user-card{display:flex; align-items:center; gap:10px; background:var(--void); border:1px solid var(--line); border-radius:12px; padding:9px 10px}
     .avatar{width:30px; height:30px; border-radius:50%; background:#1E1F26; border:1px solid var(--line-2); display:grid; place-items:center; font-size:12px; font-weight:600; flex:0 0 auto}
     .who{flex:1; min-width:0}
@@ -113,34 +105,26 @@
     .btn-quiet{background:transparent; color:var(--txt); border:1px solid var(--line-2); border-radius:12px; padding:12px 14px; font-size:13.5px; cursor:pointer}
     .toast-stack{position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:60; display:flex; flex-direction:column; gap:8px; align-items:center}
     .toast{background:var(--raised-2); border:1px solid var(--line-2); border-radius:12px; padding:10px 14px; font-size:13px}
-    @media (max-width:920px){
+     @media (max-width:920px){
       .app{grid-template-columns:1fr}
-      .side{position:fixed; z-index:40; inset:0 auto 0 0; width:272px; transform:translateX(-102%); transition:transform 200ms ease}
-      .side.open{transform:none}
-      .menu-btn{display:grid}
-      .hero{padding-top:44px}
+      .side{display:none}
+      .menu-btn{display:none !important}
+      .hero{padding-top:32px}
     }
     @media (prefers-reduced-motion: reduce){*{animation:none !important; transition:none !important}}
   </style>
 </head>
 <body>
   <div class="app">
-    <aside class="side" id="sidebar" aria-label="Rooms and session">
+    <aside class="side" id="sidebar" aria-label="Session">
       <div class="side-top">
         <div class="logo"><div class="mark">✕</div><b>Secure Chat</b></div>
-        <button class="new-btn" id="newChatBtn">✎&nbsp; New chat</button>
-      </div>
-      <div class="side-scroll">
-        <div class="side-label">Rooms</div>
-        <button class="room active" data-room="general"><span class="hash">#</span> general</button>
-        <button class="room" data-room="engineering"><span class="hash">#</span> engineering</button>
-        <button class="room" data-room="random"><span class="hash">#</span> random</button>
       </div>
       <div class="side-foot">
         <div class="user-card">
           <div class="avatar" id="avatar">?</div>
-          <div class="who"><b id="me">Not linked</b><span id="meSub">ticket required</span></div>
-          <button class="link-btn" id="linkDeviceBtn">Link</button>
+          <div class="who"><b id="me">Not linked</b><span id="meSub">enter nickname</span></div>
+          <button class="link-btn" id="linkDeviceBtn">Invite</button>
         </div>
       </div>
     </aside>
@@ -148,20 +132,17 @@
     <main class="main">
       <header class="topbar">
         <button class="icon-btn menu-btn" id="menuBtn" aria-label="Open sidebar">☰</button>
-        <div class="room-pill"><span>#</span> <span id="roomName">general</span></div>
-        <div class="top-actions"><button class="primary-btn" id="openQrBtn">Link device</button></div>
+        <div class="room-pill">Private · 2-person · E2E</div>
+        <div class="top-actions"><button class="primary-btn" id="openQrBtn">Invite</button></div>
       </header>
 
       <div class="scroll" id="scroll">
         <div class="col">
           <section class="hero" id="hero">
-            <h1>What should we<br>talk about<em> — securely?</em></h1>
-            <p>No account. Just a nickname — ephemeral, auto-deleted. Invite the second person with a QR.</p>
-            <div style="display:flex; gap:10px; margin-top:18px; max-width:420px">
-              <input id="nickInput" placeholder="Your nickname" maxlength="24" autocomplete="off" style="flex:1; background:var(--card); border:1px solid var(--line-2); color:var(--txt); border-radius:12px; padding:12px 14px; font-size:14px; outline:none" />
-              <button class="primary-btn" id="enterBtn" style="padding:12px 18px; flex:0 0 auto">Enter chat</button>
-            </div>
-            <p class="mono" style="margin-top:10px; font-size:11px; color:var(--dim)">Random ID · no email/phone · IP not logged · messages auto-expire · E2E on invite rooms</p>
+            <h1>Your private link<em> — 2-person</em></h1>
+            <p>Scan the QR to chat. No nickname, no account — just share the QR. It expires in 90 seconds and burns after one scan.</p>
+            <button class="primary-btn" id="heroLinkBtn" style="margin-top:18px; padding:12px 18px">Show QR</button>
+            <p class="mono" style="margin-top:10px; font-size:11px; color:var(--dim)">Ephemeral · no email/phone · IP not logged · E2E · refresh erases</p>
           </section>
           <div class="presence" id="presence"></div>
           <div id="msgs" role="log" aria-live="polite" aria-relevant="additions"></div>
@@ -172,7 +153,7 @@
         <div class="col">
           <pre id="debug" aria-label="Debug log"></pre>
           <div class="composer">
-            <textarea id="msgInput" rows="1" placeholder="Message #general" maxlength="2000" autocomplete="off"></textarea>
+            <textarea id="msgInput" rows="1" placeholder="Message" maxlength="2000" autocomplete="off"></textarea>
             <div class="composer-bar">
               <span class="hint">Enter to send</span>
               <span class="spacer"></span>

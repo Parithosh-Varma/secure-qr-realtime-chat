@@ -333,28 +333,16 @@ function autogrow() {
   inputEl.style.height = Math.min(160, inputEl.scrollHeight) + "px";
 }
 
-async function enterWithNickname() {
-  const inp = document.getElementById("nickInput");
-  const nick = (inp?.value || "").trim() || `anon-${Math.random().toString(36).slice(2,6)}`;
-  if (nick.length < 2 || nick.length > 24) return toast("Nickname 2–24 chars");
-  const tmpId = `u_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`; // random temporary ID
+async function ensureEphemeralIdentity() {
+  if (jwt && identity) return;
+  const nick = `anon-${Math.random().toString(36).slice(2,6)}`;
+  const tmpId = `u_${Math.random().toString(36).slice(2,10)}_${Date.now().toString(36)}`;
   try {
     const res = await fetch(api("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: tmpId, displayName: nick }) });
     const data = await res.json();
-    if (!res.ok || !data.token) throw new Error(data.error || "mint failed");
-    jwt = data.token; identity = { userId: data.userId, displayName: nick };
-    // ephemeral private room per nickname — only you until you invite 2nd person (then dm_* shared)
-    privateRoomId = `dm_${Math.random().toString(36).slice(2,10)}${Date.now().toString(36).slice(-4)}`;
-    currentRoom = privateRoomId;
-    renderMe();
-    toast(`Welcome, ${nick} — fresh private room ${privateRoomId} (2-person, empty)`);
-    setGated(false);
-    if (heroEl) heroEl.style.display = "none";
-    connectChat(currentRoom);
-  } catch (e) { toast("Could not enter — try again"); }
+    if (data.token) { jwt = data.token; identity = { userId: data.userId, displayName: nick }; renderMe(); }
+  } catch {}
 }
-document.getElementById("enterBtn")?.addEventListener("click", enterWithNickname);
-document.getElementById("nickInput")?.addEventListener("keydown", (e) => { if (e.key === "Enter") enterWithNickname(); });
 
 $("#gen")?.addEventListener("click", gen);
 $("#openQrBtn")?.addEventListener("click", () => { openModal(); if (!currentToken || Date.now() > expiresAt) gen(); });
@@ -375,9 +363,13 @@ $("#newChatBtn")?.addEventListener("click", () => { msgsEl.innerHTML = ""; updat
 $("#menuBtn")?.addEventListener("click", () => $("#sidebar")?.classList.add("open"));
 $$(".room").forEach((b) => b.addEventListener("click", () => { connectChat(b.dataset.room); $("#sidebar")?.classList.remove("open"); }));
 
-// Boot: ephemeral — always start with nickname hero, never restore from storage (refresh erases)
+// Boot: ephemeral, no nickname ask — QR only. Auto-mint random anon, show QR.
 renderMe();
 setTimer();
-setGated(false);
-if (heroEl) heroEl.style.display = "";
-appendSystem("Enter a nickname above to start — no email, no phone, auto-deleted. Invite 2nd person with Link device → QR (E2E). Refresh erases everything.");
+ensureEphemeralIdentity().then(() => {
+  renderMe();
+  setGated(true);
+  if (heroEl) heroEl.style.display = "";
+  appendSystem("Share this QR to chat — no account, no nickname needed. Scan to join (2-person, E2E). Refresh erases everything.");
+  gen();
+});
