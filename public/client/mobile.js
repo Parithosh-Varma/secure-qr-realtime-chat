@@ -190,27 +190,22 @@ try {
     privateRoomM = `dm_${p.slice(0,12)}`;
     // Hide token from address bar immediately (privacy) — keep it only in memory
     history.replaceState(null, "", location.pathname);
-    // Direct chat after scan — no approve/permission, just join
+    // Hide UI instantly (no flash) — already hidden via html.scanned CSS, ensure chat visible
+    const ic = document.getElementById("inviteCard");
+    if (ic) ic.style.display = "none";
+    const nickCard = document.querySelector(".card");
+    if (nickCard) nickCard.style.display = "none";
+    const chatWrap = document.getElementById("chatWrap");
+    if (chatWrap) chatWrap.classList.add("open");
+    // Direct chat after scan — no preview, no approve UI, just join
     await ensureMobileSession();
-    const ok = await doPreview(p);
-    if (ok) {
-      // auto-approve without UI
-      const resA = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token: p, action: "approve" }) });
-      if (resA.ok) {
-        const ic = document.getElementById("inviteCard");
-        if (ic) ic.style.display = "none";
-        showConfirm(false);
-        if (previewOut) previewOut.textContent = "";
-        // Hide nickname card as well
-        const nickCard = document.querySelector(".card");
-        if (nickCard) nickCard.style.display = "none";
-        const h1 = document.querySelector("h1");
-        if (h1) h1.innerHTML = "Chat<br><em>with me</em>";
-        const sub = document.querySelector(".sub");
-        if (sub) sub.textContent = "Connected via QR — just chat.";
-        joinChatM();
-      }
-    }
+    // silent approve — no UI
+    try { await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token: p, action: "approve" }) }); } catch {}
+    joinChatM();
+    const h1 = document.querySelector("h1");
+    if (h1) h1.innerHTML = "Chat<br><em>with me</em>";
+    const sub = document.querySelector(".sub");
+    if (sub) sub.textContent = "Connected via QR — just chat.";
   }
 } catch {}
 // Refresh erases: no restore from storage — always start fresh

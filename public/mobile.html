@@ -7,8 +7,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>try{ if(new URLSearchParams(location.search).has("token")){ document.documentElement.classList.add("scanned"); } }catch{}</script>
   <style>
     :root{--void:#0A0A0B; --card:#131318; --raised:#1C1D23; --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.13); --txt:#ECECED; --mut:#9A9AA3; --dim:#6B6B74; --aura:#7AA2FF; --danger:#F4212E}
+    html.scanned .card, html.scanned #inviteCard, html.scanned #dock, html.scanned #confirm{display:none !important}
+    html.scanned #chatWrap{display:block !important}
+    html.scanned h1{font-size:0; margin:0}
+    html.scanned h1::after{content:"Chat"; font-size:30px; font-family:"Inter Tight",sans-serif; font-weight:600; letter-spacing:-.04em}
     *{box-sizing:border-box}
     body{margin:0; background:var(--void); color:var(--txt); font-family:"Inter",system-ui,sans-serif; font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased}
     :focus-visible{outline:2px solid var(--aura); outline-offset:2px}
