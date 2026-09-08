@@ -31,7 +31,7 @@ const roomNameEl = $("#roomName");
 const RING_C = 97.4;
 
 let pollTimer = null, countdownTimer = null, ws = null, chatWs = null;
-let currentToken = null, expiresAt = 0;
+let currentToken = null, expiresAt = 0, createdAsHost = false;
 let gated = true;
 let jwt = localStorage.getItem("chat_jwt") || "";
 let identity = null;
@@ -131,7 +131,9 @@ async function gen() {
   openModal();
   let res;
   try {
-    res = await fetch(api("/api/auth/qr/create"), { method: "POST" });
+    const headers = {};
+    if (jwt) headers["Authorization"] = `Bearer ${jwt}`;
+    res = await fetch(api("/api/auth/qr/create"), { method: "POST", headers });
   } catch {
     setStatus("Offline");
     if (qrEl) qrEl.innerHTML = '<div class="empty">Network error — retry</div>';
@@ -145,9 +147,10 @@ async function gen() {
     return;
   }
   currentToken = data.token; expiresAt = data.expiresAt;
+  createdAsHost = !!jwt; // if we were already linked, this QR is an invite to chat with me
   // QR encodes Pages origin (so phone lands on Pages /mobile, not Worker). data.url is Worker origin when called via API_BASE.
   const qrText = API_BASE ? `${location.origin}/mobile?token=${encodeURIComponent(data.token)}` : data.url;
-  setStatus("Scan with mobile");
+  setStatus(createdAsHost ? "Invite — scan to chat with me" : "Scan with mobile");
   setTimer();
   countdownTimer = setInterval(setTimer, 400);
   if (qrEl) {
@@ -170,7 +173,10 @@ function tryWs(token) {
     ws.onmessage = (e) => {
       try {
         const m = JSON.parse(e.data);
-        if (m.status === "approved") { setStatus("Approved"); claim(token); }
+        if (m.status === "approved") {
+          if (createdAsHost) { setStatus("Joined — say hello"); toast("Someone joined your chat"); setGated(false); modal?.classList.remove("open"); connectChat(currentRoom); cleanup(); }
+          else { setStatus("Approved"); claim(token); }
+        }
         if (m.status === "denied") { setStatus("Denied"); cleanup(); }
         if (m.status === "expired") { setStatus("Expired"); cleanup(); }
       } catch {}
@@ -184,7 +190,10 @@ function startPolling(token) {
     try { res = await fetch(api(`/api/auth/qr/status?token=${encodeURIComponent(token)}`)); }
     catch { return; }
     const data = await res.json().catch(() => ({}));
-    if (data.status === "approved") { setStatus("Approved"); claim(token); }
+    if (data.status === "approved") {
+      if (createdAsHost) { setStatus("Joined — say hello"); toast("Someone joined your chat"); setGated(false); modal?.classList.remove("open"); connectChat(currentRoom); cleanup(); }
+      else { setStatus("Approved"); claim(token); }
+    }
     if (data.status === "denied") { setStatus("Denied"); cleanup(); }
     if (data.status === "expired") { setStatus("Expired"); cleanup(); }
   }, 1500);

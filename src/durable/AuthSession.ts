@@ -20,6 +20,7 @@ type StoredState = {
   expiresAt: number;
   fingerprint: QrSessionState["fingerprint"];
   tokenHash: string;
+  host?: UserIdentity; // who created the QR (for invite-to-chat)
   approver?: UserIdentity & { approvedAt: number };
   claimedAt?: number;
 };
@@ -58,12 +59,12 @@ export class AuthSession implements DurableObject {
 
   // ---- Create pending session ----
   private async handleCreate(req: Request): Promise<Response> {
-    // Body: { tokenHash, fingerprint, ttlMs }
-    const body = (await req.json().catch(() => null)) as { tokenHash?: string; fingerprint?: StoredState["fingerprint"]; ttlMs?: number } | null;
+    // Body: { tokenHash, fingerprint, ttlMs, host? }
+    const body = (await req.json().catch(() => null)) as { tokenHash?: string; fingerprint?: StoredState["fingerprint"]; ttlMs?: number; host?: UserIdentity } | null;
     if (!body?.tokenHash || !body.fingerprint || typeof body.ttlMs !== "number") {
       return Response.json({ error: "Invalid body" }, { status: 400 });
     }
-    const { tokenHash, fingerprint, ttlMs } = body;
+    const { tokenHash, fingerprint, ttlMs, host } = body;
     if (ttlMs < 60_000 || ttlMs > 120_000) return Response.json({ error: "TTL must be 60-120s" }, { status: 400 });
 
     const existing = await this.storage.get<StoredState>("state");
@@ -81,6 +82,7 @@ export class AuthSession implements DurableObject {
       expiresAt: now + ttlMs,
       fingerprint,
       tokenHash,
+      host: host?.userId ? { userId: host.userId, displayName: host.displayName, email: host.email } : undefined,
     };
     await this.storage.put("state", state);
     await this.storage.setAlarm(state.expiresAt + 1000);
@@ -109,9 +111,13 @@ export class AuthSession implements DurableObject {
       status: state.status,
       createdAt: state.createdAt,
       expiresAt: state.expiresAt,
+      host: state.host ? { userId: state.host.userId, displayName: state.host.displayName } : undefined,
     };
     // Only expose approver presence, not identity, on status poll (desktop is unauthenticated)
-    if (state.status === "approved") resp.approvedAt = state.approver?.approvedAt;
+    if (state.status === "approved") {
+      resp.approvedAt = state.approver?.approvedAt;
+      resp.approver = state.approver ? { userId: state.approver.userId, displayName: state.approver.displayName } : undefined;
+    }
 
     return Response.json(resp);
   }

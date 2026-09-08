@@ -39,15 +39,33 @@
     .check{display:flex; gap:10px; align-items:flex-start; margin:12px 0}
     .check input{width:18px; height:18px; accent-color:#fff}
     .check label{font-size:13px}
-    .dock{position:fixed; bottom:0; left:0; right:0; background:rgba(10,10,11,.88); backdrop-filter:blur(14px); border-top:1px solid var(--line); padding:12px 18px calc(14px + env(safe-area-inset-bottom))}
+     .dock{position:fixed; bottom:0; left:0; right:0; background:rgba(10,10,11,.88); backdrop-filter:blur(14px); border-top:1px solid var(--line); padding:12px 18px calc(14px + env(safe-area-inset-bottom))}
     .dock-inner{max-width:520px; margin:0 auto; display:flex; gap:8px}
+    /* chat — minimal Grok-like, appears after scan+approve */
+    #chatWrap{display:none; border:1px solid var(--line); background:var(--card); border-radius:18px; overflow:hidden; margin-top:14px}
+    #chatWrap.open{display:block}
+    #chatHead{display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); font-family:"Inter Tight",sans-serif; font-size:14px}
+    #chatHead span{margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut); border:1px solid var(--line); border-radius:99px; padding:3px 9px}
+    #mmsgs{height:280px; overflow:auto; padding:12px; display:flex; flex-direction:column; gap:2px}
+    .mrow{display:flex; gap:10px; padding:8px 8px; border-radius:12px}
+    .mrow.me{justify-content:flex-end}
+    .mrow .ava{width:28px; height:28px; border-radius:50%; flex:0 0 auto; display:grid; place-items:center; font-size:11px; font-weight:600; background:#1C1D23; border:1px solid var(--line)}
+    .mrow.me .ava{display:none}
+    .mbub{max-width:78%; font-size:13.5px; line-height:1.5; padding:9px 12px; border-radius:16px; border:1px solid var(--line); background:var(--raised)}
+    .mrow.me .mbub{background:#fff; color:#000; border-color:#fff; border-radius:16px 16px 4px 16px}
+    .msys{text-align:center; color:var(--dim); font-family:"JetBrains Mono",monospace; font-size:11px; padding:6px}
+    .composer{display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line)}
+    .composer input{flex:1; background:var(--void); border:1px solid var(--line); color:var(--txt); border-radius:12px; padding:10px 12px; font-size:14px; outline:none}
+    .composer input:focus{border-color:rgba(122,162,255,.5)}
+    .send{border:0; width:36px; height:36px; border-radius:50%; background:#fff; color:#000; display:grid; place-items:center; cursor:pointer; flex:0 0 auto}
+    .send:disabled{opacity:.4}
   </style>
 </head>
 <body>
-  <header class="top"><div class="top-inner"><a class="back" href="/desktop" aria-label="Back">←</a><b>Verify login</b></div></header>
+  <header class="top"><div class="top-inner"><a class="back" href="/" aria-label="Back">←</a><b>Chat with me</b></div></header>
   <div class="wrap">
-    <h1>Is this you<br><em>trying to link?</em></h1>
-    <p class="sub">Check it matches your desktop, then approve. The ticket burns instantly.</p>
+    <h1>Scan to chat<br><em>with me</em></h1>
+    <p class="sub">Mint your session, scan the QR on my screen, confirm — then we’re in the same room. Direct.</p>
 
     <section class="card">
       <h2>1 · Your session</h2>
@@ -66,13 +84,19 @@
       <p class="note" id="previewOut">Awaiting token…</p>
       <div id="confirm" role="dialog" aria-labelledby="confirmTitle">
         <ul id="details"></ul>
-        <div class="check"><input id="ack" type="checkbox" /><label for="ack">I started this login and the time looks right.</label></div>
+        <div class="check"><input id="ack" type="checkbox" /><label for="ack">This looks like your device — approve to join my chat.</label></div>
       </div>
+    </section>
+
+    <section id="chatWrap" aria-label="Chat with host">
+      <div id="chatHead"><b>Chat</b> <span id="chatState">not joined</span></div>
+      <div id="mmsgs" role="log" aria-live="polite"></div>
+      <div class="composer"><input id="mInput" placeholder="Message — Enter to send" maxlength="2000" autocomplete="off" /><button class="send" id="mSend" aria-label="Send" disabled>↑</button></div>
     </section>
   </div>
   <div class="dock" id="dock" style="display:none"><div class="dock-inner">
     <button id="deny" class="btn btn-quiet" style="flex:1; color:#FF8585">Deny</button>
-    <button id="approve" class="btn btn-primary" disabled>Approve</button>
+    <button id="approve" class="btn btn-primary" disabled>Approve & chat</button>
   </div></div>
   <script src="/config.js"></script>
   <script type="module" src="/client/mobile.js"></script>
