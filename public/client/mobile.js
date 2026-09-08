@@ -77,11 +77,9 @@ async function joinChatM() {
   mWs.onmessage = async (e) => {
     try {
       const d = JSON.parse(e.data);
-      if (d.type === "welcome" && d.history?.length) {
-        for (const m of d.history) {
-          const body = await e2eDecryptM(m.body, e2eKeyM);
-          mAppend(`${m.displayName || m.userId}: ${body}`, false);
-        }
+      if (d.type === "welcome") {
+        // Privacy: suppress history — fresh 1:1 only
+        if (d.history?.length) console.log("history suppressed", d.history.length);
       } else if (d.type === "message") {
         const body = await e2eDecryptM(d.message.body, e2eKeyM);
         const mine = d.message.userId === (JSON.parse(atob(mobileJwt.split(".")[1]))?.userId);
@@ -109,7 +107,8 @@ $("#login")?.addEventListener("click", async () => {
   const data = await res.json().catch(() => ({}));
   if (data.token) {
     mobileJwt = data.token; mobileDisplay = nick;
-    if (loginOut) loginOut.textContent = `Ready as ${nick} · ephemeral ${tmpId.slice(0,8)}… (refresh erases)`;
+    privateRoomM = `dm_${Math.random().toString(36).slice(2,10)}${Date.now().toString(36).slice(-4)}`;
+    if (loginOut) loginOut.textContent = `Ready as ${nick} · private ${privateRoomM} (2-person, refresh erases)`;
   } else if (loginOut) loginOut.textContent = "Could not mint — try again";
 });
 $("#preview")?.addEventListener("click", async () => {

@@ -272,8 +272,10 @@ async function connectChat(roomId = "general") {
     try {
       const d = JSON.parse(e.data);
       if (d.type === "welcome") {
-        if (d.history?.length) for (const m of d.history) await appendMsg(m);
+        // Privacy: do not replay history — fresh session only (ephemeral, refresh erases, 2-person dm_* auto-expires)
+        // History still exists server-side for reconnect grace but is not shown to new participants.
         updateHero();
+        if (d.history?.length) log("history suppressed", d.history.length);
       } else if (d.type === "message") await appendMsg(d.message);
       else if (d.type === "presence" && presenceEl) {
         presenceEl.style.display = "block";
@@ -341,10 +343,11 @@ async function enterWithNickname() {
     const data = await res.json();
     if (!res.ok || !data.token) throw new Error(data.error || "mint failed");
     jwt = data.token; identity = { userId: data.userId, displayName: nick };
-    // ephemeral room per session (random) — 2-person dm_ will replace this on invite
-    privateRoomId = null; currentRoom = "general";
+    // ephemeral private room per nickname — only you until you invite 2nd person (then dm_* shared)
+    privateRoomId = `dm_${Math.random().toString(36).slice(2,10)}${Date.now().toString(36).slice(-4)}`;
+    currentRoom = privateRoomId;
     renderMe();
-    toast(`Welcome, ${nick} — ephemeral ${tmpId.slice(0,8)}…`);
+    toast(`Welcome, ${nick} — fresh private room ${privateRoomId} (2-person, empty)`);
     setGated(false);
     if (heroEl) heroEl.style.display = "none";
     connectChat(currentRoom);
