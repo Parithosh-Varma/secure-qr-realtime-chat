@@ -190,12 +190,27 @@ try {
     privateRoomM = `dm_${p.slice(0,12)}`;
     // Hide token from address bar immediately (privacy) — keep it only in memory
     history.replaceState(null, "", location.pathname);
-    // Auto-start chatting once scanned — no token visible, no extra taps beyond ack
+    // Direct chat after scan — no approve/permission, just join
     await ensureMobileSession();
-    await doPreview(p);
-    // Hide nickname card when coming from QR to keep it minimal
-    const nickCard = document.querySelector(".card");
-    if (nickCard && p) nickCard.style.display = "none";
+    const ok = await doPreview(p);
+    if (ok) {
+      // auto-approve without UI
+      const resA = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token: p, action: "approve" }) });
+      if (resA.ok) {
+        const ic = document.getElementById("inviteCard");
+        if (ic) ic.style.display = "none";
+        showConfirm(false);
+        if (previewOut) previewOut.textContent = "";
+        // Hide nickname card as well
+        const nickCard = document.querySelector(".card");
+        if (nickCard) nickCard.style.display = "none";
+        const h1 = document.querySelector("h1");
+        if (h1) h1.innerHTML = "Chat<br><em>with me</em>";
+        const sub = document.querySelector(".sub");
+        if (sub) sub.textContent = "Connected via QR — just chat.";
+        joinChatM();
+      }
+    }
   }
 } catch {}
 // Refresh erases: no restore from storage — always start fresh
