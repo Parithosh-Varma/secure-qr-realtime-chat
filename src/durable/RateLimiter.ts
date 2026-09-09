@@ -26,10 +26,9 @@ export class RateLimiter implements DurableObject {
     if (req.method === "POST" && url.pathname === "/check") {
       return this.handleCheck(req);
     }
-    if (req.method === "POST" && url.pathname === "/reset") {
-      await this.storage.deleteAll();
-      return Response.json({ ok: true });
-    }
+    // SECURITY: /reset removed — it was unauthenticated and would let anyone
+    // clear rate-limit buckets (brute-force bypass) if the DO were ever
+    // reachable. Reset via dashboard / redeploy instead.
     return new Response("Not found", { status: 404 });
   }
 

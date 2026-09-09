@@ -29,14 +29,18 @@ type StoredState = {
 export class AuthSession implements DurableObject {
   private state: DurableObjectState;
   private storage: DurableObjectStorage;
+  private env: { ALLOWED_ORIGIN?: string };
 
   // In-memory WebSocket waiters for desktop `GET /ws` holders — hibernation-friendly
   // We keep list of waiting WebSockets; on approve/deny we notify them.
+  // Bounded to prevent memory exhaustion (unauthenticated WS).
   private waiters = new Set<WebSocket>();
+  private static readonly MAX_WAITERS = 5;
 
-  constructor(state: DurableObjectState) {
+  constructor(state: DurableObjectState, env: { ALLOWED_ORIGIN?: string } = {}) {
     this.state = state;
     this.storage = state.storage;
+    this.env = env;
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -61,11 +65,24 @@ export class AuthSession implements DurableObject {
   // ---- Create pending session ----
   private async handleCreate(req: Request): Promise<Response> {
     // Body: { tokenHash, fingerprint, ttlMs, host?, roomId? }
+    // SECURITY: client generates the raw auth token locally and sends ONLY
+    // its SHA-256 hash. The raw token (and the separate e2eSecret, which is
+    // never sent to the server at all) stays client-side, so the server can
+    // never derive E2E message keys. Legacy callers with no tokenHash get a
+    // server-generated session (deprecated).
     const body = (await req.json().catch(() => null)) as { tokenHash?: string; fingerprint?: StoredState["fingerprint"]; ttlMs?: number; host?: UserIdentity; roomId?: string } | null;
     if (!body?.tokenHash || !body.fingerprint || typeof body.ttlMs !== "number") {
       return Response.json({ error: "Invalid body" }, { status: 400 });
     }
     const { tokenHash, fingerprint, ttlMs, host } = body;
+    if (!/^[a-f0-9]{64}$/.test(tokenHash)) return Response.json({ error: "tokenHash must be SHA-256 hex" }, { status: 400 });
+    // Validate fingerprint shape (defense-in-depth — Worker builds it, but DO never trusts shape)
+    if (typeof fingerprint !== "object" || typeof fingerprint.ip !== "string" || typeof fingerprint.userAgent !== "string") {
+      return Response.json({ error: "Invalid fingerprint" }, { status: 400 });
+    }
+    if (fingerprint.ip.length > 16 || fingerprint.userAgent.length > 512) {
+      return Response.json({ error: "Invalid fingerprint" }, { status: 400 });
+    }
     if (ttlMs < 60_000 || ttlMs > 120_000) return Response.json({ error: "TTL must be 60-120s" }, { status: 400 });
     const roomId = body.roomId && /^[a-zA-Z0-9_-]{3,64}$/.test(body.roomId) ? body.roomId : `dm_${tokenHash.slice(0, 32)}`;
 
@@ -116,6 +133,15 @@ export class AuthSession implements DurableObject {
       expiresAt: state.expiresAt,
       roomId: state.roomId,
       host: state.host ? { userId: state.host.userId, displayName: state.host.displayName } : undefined,
+      // Exposed so the mobile confirmation screen can show device/location
+      // before explicit approve. IP is already hashed server-side; UA truncated.
+      fingerprint: {
+        userAgent: state.fingerprint.userAgent.slice(0, 120),
+        acceptLanguage: state.fingerprint.acceptLanguage,
+        city: state.fingerprint.city,
+        country: state.fingerprint.country,
+        createdAt: state.createdAt,
+      },
     };
     // Only expose approver presence, not identity, on status poll (desktop is unauthenticated)
     if (state.status === "approved") {
@@ -207,25 +233,65 @@ export class AuthSession implements DurableObject {
 
     log("info", "qr.claimed", { tokenHash: hashForLog(tokenHash), userId: approver.userId });
 
-    // Return verified identity so Worker can mint JWT
+    // Return verified identity so Worker can mint JWT (no email — guests only)
     return Response.json({
       ok: true,
       status: "claimed",
       roomId: state.roomId,
-      identity: { userId: approver.userId, displayName: approver.displayName, email: approver.email },
+      identity: { userId: approver.userId, displayName: approver.displayName },
     });
   }
 
   // ---- Desktop waiter WebSocket ----
   private async handleWs(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    // CSWSH: validate Origin for WS
+    // CSWSH: enforce the same strict allowlist as ChatRoom. Missing Origin
+    // (curl) is rejected for this unauthenticated endpoint — browsers always
+    // send Origin on WS.
     const origin = req.headers.get("Origin");
-    if (origin) {
-      // For AuthSession we allow same-origin only; Worker already handles CORS but DO also checks
-      // In DO context we can't access env.ALLOWED_ORIGIN easily, so we allow any https origin but require tokenHash
-      // Still reject null origin with credentials? We enforce tokenHash binding, so Origin check is defense-in-depth
-      try { new URL(origin); } catch { return Response.json({ error: "Invalid Origin" }, { status: 403 }); }
+    const allowedOrigins = this.env.ALLOWED_ORIGIN?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+    if (!origin) return Response.json({ error: "Origin required" }, { status: 403 });
+    try {
+      const o = new URL(origin);
+      const isLocalOrigin = o.hostname === "localhost" || o.hostname === "127.0.0.1" || o.hostname === "::1";
+      if (!isLocalOrigin && o.protocol !== "https:") return Response.json({ error: "Forbidden Origin" }, { status: 403 });
+    } catch {
+      return Response.json({ error: "Invalid Origin" }, { status: 403 });
+    }
+    const isAllowedOrigin =
+      allowedOrigins.includes(origin) ||
+      allowedOrigins.some((a) => {
+        if (!a.includes("*")) return false;
+        try {
+          const o = new URL(origin);
+          const base = a.split("*.")[1];
+          if (!base) return false;
+          return o.hostname === base || o.hostname.endsWith("." + base);
+        } catch {
+          return false;
+        }
+      });
+    // Local dev without configured origins: allow loopback + same-origin only
+    const isLoopback = (() => {
+      try {
+        const o = new URL(origin);
+        return o.hostname === "localhost" || o.hostname === "127.0.0.1" || o.hostname === "::1";
+      } catch {
+        return false;
+      }
+    })();
+    const fwdHost = req.headers.get("X-Forwarded-Host") || "";
+    const isSameOrigin = (() => {
+      try {
+        if (!fwdHost) return false;
+        const o = new URL(origin);
+        return o.host === fwdHost;
+      } catch {
+        return false;
+      }
+    })();
+    if (!isAllowedOrigin && !isLoopback && !isSameOrigin && !allowedOrigins.includes("*")) {
+      return Response.json({ error: "Forbidden Origin" }, { status: 403 });
     }
     const tokenHash = url.searchParams.get("tokenHash");
     if (!tokenHash) return Response.json({ error: "tokenHash required" }, { status: 400 });
@@ -242,6 +308,10 @@ export class AuthSession implements DurableObject {
     // Upgrade
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
+    // Bound waiters to prevent unauthenticated memory exhaustion
+    if (this.waiters.size >= AuthSession.MAX_WAITERS) {
+      return Response.json({ error: "Too many waiters" }, { status: 429 });
+    }
     // Hibernation API — server will survive DO eviction and wake on message/close
     this.state.acceptWebSocket(server);
 

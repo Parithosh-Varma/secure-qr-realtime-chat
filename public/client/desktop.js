@@ -1,8 +1,12 @@
-// Secure Chat — QR-only, 2-person, E2E. Refresh erases + refresh closes own tab.
+// Secure Chat — QR-only, 2-person, E2E. Refresh erases.
+// A reload is only terminal once inside the chat: pre-auth (QR stage) reloads
+// boot fresh with a new QR and must never land on about:blank.
 try {
   const nav = performance.getEntriesByType && performance.getEntriesByType("navigation")[0];
   const isReload = (nav && nav.type === "reload") || (performance.navigation && performance.navigation.type === 1);
-  if (isReload) {
+  let wasInChat = false;
+  try { wasInChat = sessionStorage.getItem("qrchat.inchat") === "1"; } catch {}
+  if (isReload && wasInChat) {
     try { localStorage.clear(); sessionStorage.clear(); } catch {}
     // Close own tab on reload (peer already closed via beforeunload WS 4000)
     try { history.replaceState(null, "", "about:blank"); } catch {}
@@ -20,7 +24,7 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 const statusEl = $("#status"), timerText = $("#timerText"), ringFg = $("#ringFg"), ringNum = $("#ringNum"), qrEl = $("#qr"), linkEl = $("#link"), linkWrap = $("#linkWrap"), debugEl = $("#debug"), msgsEl = $("#msgs"), meEl = $("#me"), meSub = $("#meSub"), avatarEl = $("#avatar"), presenceEl = $("#presence"), inputEl = $("#msgInput"), sendBtn = $("#send"), heroEl = $("#hero"), scrollEl = $("#scroll"), modal = $("#qrModal"), toastsEl = $("#toasts"), roomNameEl = $("#roomName");
 const RING_C = 97.4;
 let pollTimer=null, countdownTimer=null, ws=null, chatWs=null;
-let currentToken=null, expiresAt=0, createdAsHost=false, privateRoomId=null;
+let currentAuthToken=null, currentE2ESecret=null, expiresAt=0, createdAsHost=false, privateRoomId=null;
 let gated=true;
 let jwt="", identity=null;
 let currentRoom="general";
@@ -53,28 +57,44 @@ function renderMe(){
   if(roomNameEl) roomNameEl.textContent=privateRoomId||currentRoom;
 }
 function updateSend(){ if(sendBtn&&inputEl) sendBtn.disabled=!(chatWs&&chatWs.readyState===1&&inputEl.value.trim()); }
-function openModal(){ setGated(true); }
+function openModal(){ try { sessionStorage.removeItem("qrchat.inchat"); } catch {} setGated(true); }
 function closeModal(){ if(gated) return; const qrView=document.getElementById("qrView"), chatView=document.getElementById("chatView"); if(qrView) {qrView.style.display="none"; qrView.classList.add("hide");} if(chatView){chatView.style.display="grid"; chatView.classList.remove("hide");} modal?.classList.remove("open"); }
 function updateHero(){ if(heroEl&&msgsEl) heroEl.style.display=msgsEl.querySelector(".row")?"none":""; }
-// --- helpers: secure random id/nick (replace Math.random) ---
-function secureSuffix(len){
-  const bytes=new Uint8Array(Math.ceil(len*3/4));
-  crypto.getRandomValues(bytes);
-  let s=btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-  return s.slice(0,len);
+// --- helpers: CSPRNG tokens + true E2E (server never sees e2eSecret) ---
+function randomB64Url(bytes){
+  const b=new Uint8Array(bytes);
+  crypto.getRandomValues(b);
+  return btoa(String.fromCharCode(...b)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
-async function deriveE2EKey(rawToken){
-  if(!rawToken) return null;
+function secureSuffix(len){
+  return randomB64Url(Math.ceil(len*3/4)).slice(0,len);
+}
+async function sha256HexStr(s){
+  const d=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return [...new Uint8Array(d)].map(x=>x.toString(16).padStart(2,"0")).join("");
+}
+async function deriveE2EKey(e2eSecret){
+  // E2E key from the QR-fragment e2eSecret ONLY — never from the auth token
+  // the server sees. Server stores only SHA-256(authToken) and never receives
+  // e2eSecret, so it cannot decrypt dm_* ciphertext.
+  if(!e2eSecret) return null;
   try{
-    // Use HKDF-SHA256 with empty salt and info "qrchat-e2e-v1" to derive a 256-bit AES-GCM key.
-    // Fallback to single hash if HKDF unsupported.
     const enc=new TextEncoder();
-    const ikm=await crypto.subtle.importKey("raw", enc.encode(rawToken), {name:"HKDF"}, false, ["deriveKey"]);
+    const ikm=await crypto.subtle.importKey("raw", enc.encode("qrchat-e2e-v1:"+e2eSecret), {name:"HKDF"}, false, ["deriveKey"]);
     return await crypto.subtle.deriveKey({name:"HKDF", hash:"SHA-256", salt:new Uint8Array(0), info:enc.encode("qrchat-e2e-v1")}, ikm, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
   }catch{
-    const h=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawToken));
+    const h=await crypto.subtle.digest("SHA-256", new TextEncoder().encode("qrchat-e2e-v1:"+e2eSecret));
     return crypto.subtle.importKey("raw", h, {name:"AES-GCM"}, false, ["encrypt","decrypt"]);
   }
+}
+function sanitizeDecrypted(s){
+  // Client-side defense-in-depth: E2E plaintext bypasses server moderation,
+  // so strip bidi/zero-width + control chars after decrypt before textContent.
+  if(typeof s!=="string") return "";
+  s=s.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u00AD]/g, "");
+  // eslint-disable-next-line no-control-regex
+  s=s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+  return s.slice(0,2000);
 }
 async function e2eEncrypt(plain,key){
   if(!key||!privateRoomId||!privateRoomId.startsWith("dm_")) return plain;
@@ -118,9 +138,11 @@ function renderQr(el,text){
 async function ensureEphemeralIdentity(){
   if(jwt&&identity) return;
   const nick=`anon-${(crypto.randomUUID ? crypto.randomUUID().slice(0,4) : secureSuffix(4))}`;
-  const tmpId=`u_${(crypto.randomUUID ? crypto.randomUUID().replace(/-/g,'').slice(0,8) : secureSuffix(8))}_${Date.now().toString(36)}`;
   try{
-    const res=await fetch(api("/api/auth/dev-login"),{method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({userId:tmpId, displayName:nick})});
+    // Guest login: server generates userId; we send displayName ONLY (no
+    // userId/email — those are rejected server-side). Try new endpoint first.
+    let res=await fetch(api("/api/auth/guest-login"),{method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({displayName:nick})});
+    if(res.status===404) res=await fetch(api("/api/auth/dev-login"),{method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({displayName:nick})});
     const data=await res.json().catch(()=>({}));
     if(data.token){ jwt=data.token; identity={userId:data.userId, displayName:nick}; renderMe(); }
   }catch(e){ console.warn("mint failed",e); }
@@ -132,11 +154,18 @@ async function gen(){
   if(countdownTimer) clearInterval(countdownTimer);
   if(ws) try{ ws.close(); }catch{}
   openModal();
+  // True-E2E: generate authToken + e2eSecret locally. Only SHA-256(authToken)
+  // goes to the server; e2eSecret travels ONLY in the QR fragment (#a=&e=)
+  // which browsers never send over the network.
+  const authToken=randomB64Url(32);
+  const e2eSecret=randomB64Url(32);
+  let tokenHash;
+  try{ tokenHash=await sha256HexStr(authToken); }catch{ setStatus("Crypto unavailable"); return; }
   let res;
   try{
-    const headers={};
+    const headers={"Content-Type":"application/json"};
     if(jwt) headers["Authorization"]=`Bearer ${jwt}`;
-    res=await fetch(api("/api/auth/qr/create"),{method:"POST", headers});
+    res=await fetch(api("/api/auth/qr/create"),{method:"POST", headers, body:JSON.stringify({tokenHash})});
   }catch{
     setStatus("Offline");
     if(qrEl) qrEl.innerHTML='<div class="empty">Network error — retry</div>';
@@ -151,13 +180,25 @@ async function gen(){
     return;
   }
   try{
-    currentToken=data.token; expiresAt=data.expiresAt;
-    privateRoomId=data.roomId||null;
+    // New server returns {roomId, expiresAt} (no token — we generated it).
+    // Legacy servers return {token, url, roomId}.
+    expiresAt=data.expiresAt;
+    privateRoomId=data.roomId||null; // SERVER-authoritative — never derive locally
     if(privateRoomId) currentRoom=privateRoomId;
     createdAsHost=!!jwt;
-    try{ e2eKey=await deriveE2EKey(currentToken); }catch{}
-    // Use fragment (#token=) so token never hits server logs/Referer — mobile reads hash first, then falls back to ?token=
-    const qrText=API_BASE?`${location.origin}/mobile#token=${encodeURIComponent(data.token)}`:data.url.replace("?token=","#token=");
+    if(data.token){
+      // Legacy fallback: server generated the token (no separate e2eSecret).
+      currentAuthToken=data.token; currentE2ESecret=null;
+      try{ e2eKey=await deriveE2EKey("legacy:"+data.token); }catch{}
+    }else{
+      currentAuthToken=authToken; currentE2ESecret=e2eSecret;
+      try{ e2eKey=await deriveE2EKey(e2eSecret); }catch{}
+    }
+    // Fragment (#a=&e=) so secrets never hit server logs/Referer/history.
+    const frag=currentE2ESecret
+      ? `#a=${encodeURIComponent(currentAuthToken)}&e=${encodeURIComponent(currentE2ESecret)}`
+      : `#token=${encodeURIComponent(currentAuthToken)}`;
+    const qrText=`${location.origin}/mobile${frag}`;
     setStatus(createdAsHost?`Invite · ${privateRoomId} — scan to chat`:"Scan with mobile");
     setTimer();
     countdownTimer=setInterval(setTimer,400);
@@ -168,21 +209,24 @@ async function gen(){
       if(!ok){
         const d=document.createElement("div");
         d.className="qr-fallback";
-        d.textContent="QR failed — "+qrText.slice(0,60);
+        d.textContent="QR failed — open /mobile manually (no link shown for privacy)";
         qrEl.appendChild(d);
       }
     }
     if(linkEl&&linkWrap){ linkEl.textContent=""; linkWrap.style.display="none"; }
-    tryWs(data.token);
-    startPolling(data.token);
+    tryWs(currentAuthToken);
+    startPolling(currentAuthToken);
   }catch(e){
     console.error(e);
     if(qrEl) qrEl.innerHTML='<div class="empty">Render failed</div>';
   }
 }
-function tryWs(token){
+function tryWs(authToken){
   try{
-    ws=new WebSocket(`${wsBase()}/api/auth/qr/ws?token=${encodeURIComponent(token)}`);
+    // Prefer Sec-WebSocket-Protocol over ?token= (no URL leakage). Server
+    // supports both; query is deprecated.
+    try{ ws=new WebSocket(`${wsBase()}/api/auth/qr/ws`, ["qr", authToken]); }
+    catch{ ws=new WebSocket(`${wsBase()}/api/auth/qr/ws?token=${encodeURIComponent(authToken)}`); }
     ws.onmessage=(e)=>{
       try{
         const m=JSON.parse(e.data);
@@ -191,7 +235,7 @@ function tryWs(token){
             const r=m.roomId||privateRoomId||currentRoom;
             if(r){ privateRoomId=r; currentRoom=r; }
             setStatus("Joined — say hello"); toast(`Someone joined ${r} — 2-person, E2E`); setGated(false); modal?.classList.remove("open"); connectChat(r); cleanup();
-          }else{ setStatus("Approved"); claim(token); }
+          }else{ setStatus("Approved"); claim(authToken); }
         }
         if(m.status==="denied"){ setStatus("Denied"); cleanup(); }
         if(m.status==="expired"){ setStatus("Expired"); cleanup(); }
@@ -200,11 +244,11 @@ function tryWs(token){
     ws.onerror=()=>{ log("waiter error"); };
   }catch{}
 }
-function startPolling(token){
+function startPolling(authToken){
   if(pollTimer) clearInterval(pollTimer);
   pollTimer=setInterval(async()=>{
     let res;
-    try{ res=await fetch(api(`/api/auth/qr/status?token=${encodeURIComponent(token)}`)); }
+    try{ res=await fetch(api(`/api/auth/qr/status`),{headers:{"X-QR-Token":authToken}}); }
     catch{ return; }
     const data=await res.json().catch(()=>({}));
     if(data.status==="approved"){
@@ -212,23 +256,23 @@ function startPolling(token){
         const r=data.roomId||privateRoomId||currentRoom;
         if(r){ privateRoomId=r; currentRoom=r; }
         setStatus("Joined — say hello"); toast(`Someone joined ${r} — 2-person, E2E`); setGated(false); modal?.classList.remove("open"); connectChat(r); cleanup();
-      }else{ setStatus("Approved"); claim(token); }
+      }else{ setStatus("Approved"); claim(authToken); }
     }
     if(data.status==="denied"){ setStatus("Denied"); cleanup(); }
     if(data.status==="expired"){ setStatus("Expired"); cleanup(); }
   },1500);
 }
-async function claim(token){
+async function claim(authToken){
   cleanup();
   let res;
-  try{ res=await fetch(api("/api/auth/qr/claim"),{method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({token})}); }
+  try{ res=await fetch(api("/api/auth/qr/claim"),{method:"POST", headers:{"Content-Type":"application/json","X-QR-Token":authToken}, body:JSON.stringify({token:authToken})}); }
   catch{ setStatus("Offline"); return; }
   const data=await res.json().catch(()=>({}));
   if(res.ok&&data.token){
     jwt=data.token; identity=data.identity;
-    privateRoomId=data.roomId||privateRoomId;
+    privateRoomId=data.roomId||privateRoomId; // server-authoritative
     if(privateRoomId) currentRoom=privateRoomId;
-    try{ e2eKey=await deriveE2EKey(token); }catch{}
+    try{ e2eKey=await deriveE2EKey(currentE2ESecret ? currentE2ESecret : ("legacy:"+authToken)); }catch{}
     renderMe();
     setStatus("Linked");
     if(timerText) timerText.textContent="Burned";
@@ -246,7 +290,11 @@ async function connectChat(roomId="general"){
   if(msgsEl) msgsEl.innerHTML="";
   updateHero();
   if(!jwt){ setGated(true); openModal(); gen(); return; }
-  chatWs=new WebSocket(`${wsBase()}/api/room/${encodeURIComponent(roomId)}/ws?token=${encodeURIComponent(jwt)}`);
+  try { sessionStorage.setItem("qrchat.inchat", "1"); } catch {}
+  // Prefer Sec-WebSocket-Protocol for the JWT (no URL leakage); fall back to
+  // ?token= only if the protocol handshake is rejected.
+  try{ chatWs=new WebSocket(`${wsBase()}/api/room/${encodeURIComponent(roomId)}/ws`, ["bearer", jwt]); }
+  catch{ chatWs=new WebSocket(`${wsBase()}/api/room/${encodeURIComponent(roomId)}/ws?token=${encodeURIComponent(jwt)}`); }
   chatWs.onopen=()=>renderMe();
   chatWs.onmessage=async(e)=>{
     try{
@@ -269,8 +317,9 @@ async function appendMsg(m){
   const who=m.displayName||m.userId;
   const time=new Date(m.ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
   let body=m.body;
-  if(m.roomId?.startsWith("dm_")&&e2eKey) body=await e2eDecrypt(body,e2eKey);
+  if(m.roomId?.startsWith("dm_")&&e2eKey) body=sanitizeDecrypted(await e2eDecrypt(body,e2eKey));
   else if(m.roomId?.startsWith("dm_")&&!e2eKey) body="[encrypted — refresh cleared key]";
+  else body=sanitizeDecrypted(body);
   if(mine){ div.innerHTML=`<div class="bubble"><div class="body"></div></div>`; div.querySelector(".body").textContent=body; }
   else{ div.innerHTML=`<div class="ava"></div><div class="bubble"><div class="meta"><b></b><time>${time}</time></div><div class="body"></div></div>`; div.querySelector(".ava").textContent=who.slice(0,1).toUpperCase(); div.querySelector("b").textContent=who; div.querySelector(".body").textContent=body; }
   if(msgsEl) msgsEl.appendChild(div);
@@ -289,8 +338,8 @@ async function send(){
 }
 function autogrow(){ inputEl.style.height="auto"; inputEl.style.height=Math.min(160,inputEl.scrollHeight)+"px"; }
 $("#gen")?.addEventListener("click",gen);
-$("#openQrBtn")?.addEventListener("click",()=>{ openModal(); if(!currentToken||Date.now()>expiresAt) gen(); });
-$("#linkDeviceBtn")?.addEventListener("click",()=>{ openModal(); if(!currentToken||Date.now()>expiresAt) gen(); });
+$("#openQrBtn")?.addEventListener("click",()=>{ openModal(); if(!currentAuthToken||Date.now()>expiresAt) gen(); });
+$("#linkDeviceBtn")?.addEventListener("click",()=>{ openModal(); if(!currentAuthToken||Date.now()>expiresAt) gen(); });
 $("#heroLinkBtn")?.addEventListener("click",gen);
 $("#qrClose")?.addEventListener("click",closeModal);
 modal?.addEventListener("click",(e)=>{ if(e.target===modal) closeModal(); });
@@ -303,7 +352,7 @@ $("#newChatBtn")?.addEventListener("click",()=>{ if(msgsEl) msgsEl.innerHTML="";
 $("#menuBtn")?.addEventListener("click",()=>$("#sidebar")?.classList.add("open"));
 $$(".room").forEach(b=>b.addEventListener("click",()=>{ connectChat(b.dataset.room); $("#sidebar")?.classList.remove("open"); }));
 window.addEventListener("beforeunload",()=>{ try{ chatWs?.close(1000,"refresh"); ws?.close(1000,"refresh"); }catch{} });
-window.addEventListener("keydown",(e)=>{ if(e.key==="F5"||(e.ctrlKey&&e.key.toLowerCase()==="r")||(e.metaKey&&e.key.toLowerCase()==="r")){ e.preventDefault(); try{ chatWs?.close(1000,"refresh"); }catch{} setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; },80); } });
+window.addEventListener("keydown",(e)=>{ if(e.key==="F5"||(e.ctrlKey&&e.key.toLowerCase()==="r")||(e.metaKey&&e.key.toLowerCase()==="r")){ if(gated) return; e.preventDefault(); try{ chatWs?.close(1000,"refresh"); }catch{} setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; },80); } });
 // Boot: QR-only, no nickname ask — auto-mint random anon, show QR
 renderMe();
 setTimer();

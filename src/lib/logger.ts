@@ -27,6 +27,9 @@ export function log(level: LogLevel, event: string, fields: Record<string, unkno
 export function hashForLog(value: string): string {
   // Use first 8 chars of SHA-256 hex for low collision, truncated for logs
   // Fallback to DJB if crypto unavailable (e.g., tests)
+  // WARNING: this is for log correlation only (non-security). NEVER use it
+  // for rate-limit bucket keys or any security decision — it is 32-bit DJB
+  // and collides trivially (birthday ~65k). Use hashForRateLimit() instead.
   try {
     // Synchronous DJB still ok for non-security log correlation, but use crypto when possible
     // For durable log keys we keep fast DJB, but rate-limit keys now use real SHA

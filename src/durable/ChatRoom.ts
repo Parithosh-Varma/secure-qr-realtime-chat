@@ -13,12 +13,12 @@
  * Hibernation: uses state.acceptWebSocket() so connections survive eviction.
  */
 
-import { log, hashForLog } from "../lib/logger";
+import { log, hashForLog, hashForRateLimit } from "../lib/logger";
 import { sanitizeMessage, validateRoomId } from "../lib/sanitize";
 import { createModerationHook } from "../lib/moderation";
 import type { ChatMessage } from "../lib/types";
 import { MAX_PAYLOAD_BYTES, MAX_ROOM_HISTORY } from "../lib/constants";
-import { verifyJwt, extractBearer } from "../lib/jwt";
+import { verifyJwt, extractBearer, extractWsJwt } from "../lib/jwt";
 
 // Stored keys
 // messages:<roomId>:<ts>:<id> -> ChatMessage
@@ -140,15 +140,59 @@ export class ChatRoom implements DurableObject {
   // ---- WebSocket handling ----
   private async handleWebSocket(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    // CSWSH protection: validate Origin for WebSocket upgrade
+    // CSWSH protection: validate Origin for WebSocket upgrade.
+    // Fail closed when Origin is missing — browsers always send it on WS;
+    // non-browser clients must use REST + Authorization header instead.
     const origin = req.headers.get("Origin");
-    if (origin) {
-      const allowedOrigins = (this.env as unknown as { ALLOWED_ORIGIN?: string }).ALLOWED_ORIGIN?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+    const allowedOrigins = (this.env as unknown as { ALLOWED_ORIGIN?: string }).ALLOWED_ORIGIN?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+    if (!origin) {
+      return Response.json({ error: "Origin required" }, { status: 403 });
+    }
+    try {
+      const o = new URL(origin);
+      const isLocalOrigin = o.hostname === "localhost" || o.hostname === "127.0.0.1" || o.hostname === "::1";
+      if (!isLocalOrigin && o.protocol !== "https:") {
+        return Response.json({ error: "Forbidden Origin" }, { status: 403 });
+      }
+    } catch {
+      return Response.json({ error: "Invalid Origin" }, { status: 403 });
+    }
+    {
       const isAllowedOrigin =
         allowedOrigins.includes(origin) ||
-        allowedOrigins.some((a) => a.includes("*") && (() => { try { const o = new URL(origin); const base = a.split("*.")[1]; return o.hostname === base || o.hostname.endsWith("." + base); } catch { return false; } })());
+        allowedOrigins.some((a) => {
+          if (!a.includes("*")) return false;
+          try {
+            const o = new URL(origin);
+            const base = a.split("*.")[1];
+            if (!base) return false;
+            return o.hostname === base || o.hostname.endsWith("." + base);
+          } catch {
+            return false;
+          }
+        });
+      const isLoopback = (() => {
+        try {
+          const o = new URL(origin);
+          return o.hostname === "localhost" || o.hostname === "127.0.0.1" || o.hostname === "::1";
+        } catch {
+          return false;
+        }
+      })();
+      // Same-origin (Worker host forwarded by worker.ts) is always allowed —
+      // otherwise same-origin dev/prod without explicit ALLOWED_ORIGIN breaks.
+      const fwdHost = req.headers.get("X-Forwarded-Host") || "";
+      const isSameOrigin = (() => {
+        try {
+          if (!fwdHost) return false;
+          const o = new URL(origin);
+          return o.host === fwdHost;
+        } catch {
+          return false;
+        }
+      })();
       // For wildcard *, we already reject credentialed — but for WS we still enforce explicit allow
-      if (!isAllowedOrigin && !allowedOrigins.includes("*")) {
+      if (!isAllowedOrigin && !isLoopback && !isSameOrigin && !allowedOrigins.includes("*")) {
         return Response.json({ error: "Forbidden Origin" }, { status: 403 });
       }
     }
@@ -163,9 +207,11 @@ export class ChatRoom implements DurableObject {
       return Response.json({ error: "Payload too large" }, { status: 413 });
     }
 
-    // Auth: Bearer JWT required — allow query token for WS compat but prefer header
-    const token = extractBearer(req) || url.searchParams.get("token");
+    // Auth: prefer Authorization header / Sec-WebSocket-Protocol (no URL
+    // leakage). ?token= is deprecated backwards-compat only.
+    const { token, viaQuery } = extractWsJwt(req, url);
     if (!token) return Response.json({ error: "Missing Authorization" }, { status: 401 });
+    if (viaQuery) log("warn", "room.ws_query_token_deprecated", { roomId: vRoom.value });
     const secret = this.env.JWT_SECRET;
     if (!secret || secret === "dev-secret-change-me" || secret.length < 32) {
       return Response.json({ error: "Server misconfigured" }, { status: 500 });
@@ -191,18 +237,17 @@ export class ChatRoom implements DurableObject {
       return Response.json({ error: "Room is full — only 2 people allowed", max: 2 }, { status: 403 });
     }
 
-    // Rate-limit (privacy: use hashed userId/IP, not raw IP in logs)
+    // Rate-limit with strong SHA-256 bucket keys (never DJB hashForLog —
+    // it collides trivially). IP key uses hash, never raw IP in DO keys/logs.
     const ip = req.headers.get("CF-Connecting-IP") || "unknown";
     if (this.env.RATE_LIMITER) {
-      const rl = await this.checkRateLimitWithDo(`conn:ip:${hashForLog(ip)}`, { limit: 30, windowMs: 60_000 });
+      const ipHash = await hashForRateLimit(`conn:ip:${ip}`);
+      const userHash = await hashForRateLimit(`conn:user:${claims.userId}`);
+      const rl = await this.checkRateLimitWithDo(`conn:ip:${ipHash}`, { limit: 30, windowMs: 60_000 });
       if (!rl.allowed) return Response.json({ error: "Too many connections", retryAfterMs: rl.resetMs }, { status: 429 });
-      const rlUser = await this.checkRateLimitWithDo(`conn:user:${hashForLog(claims.userId)}`, { limit: 30, windowMs: 60_000 });
+      const rlUser = await this.checkRateLimitWithDo(`conn:user:${userHash}`, { limit: 30, windowMs: 60_000 });
       if (!rlUser.allowed) return Response.json({ error: "Too many connections" }, { status: 429 });
     }
-
-    // Enforce HTTPS/WSS already at Worker; double-check x-forwarded-proto
-    const proto = req.headers.get("X-Forwarded-Proto") || url.protocol.replace(":", "");
-    // Allow ws in local dev; in prod Worker already redirects http->https
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
@@ -241,7 +286,7 @@ export class ChatRoom implements DurableObject {
     });
 
     // Broadcast join presence (excluding sender's blocked users handled per-recipient)
-    this.broadcast(vRoom.value!, { type: "presence", event: "join", userId: claims.userId, displayName: claims.displayName, ts: Date.now() }, claims.userId);
+    await this.broadcast(vRoom.value!, { type: "presence", event: "join", userId: claims.userId, displayName: claims.displayName, ts: Date.now() }, claims.userId);
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -301,9 +346,10 @@ export class ChatRoom implements DurableObject {
       return;
     }
 
-    // Rate limit messages per user (privacy: no IP retained)
+    // Rate limit messages per user with strong keys (never DJB). Privacy: no IP retained.
     if (this.env.RATE_LIMITER) {
-      const rlUser = await this.checkRateLimitWithDo(`msg:user:${hashForLog(meta.userId)}`, { limit: 20, windowMs: 10_000 });
+      const userHash = await hashForRateLimit(`msg:user:${meta.userId}`);
+      const rlUser = await this.checkRateLimitWithDo(`msg:user:${userHash}`, { limit: 20, windowMs: 10_000 });
       if (!rlUser.allowed) {
         this.sendError(ws, "Rate limited", 1013);
         ws.send(JSON.stringify({ type: "error", code: "rate_limited", retryAfterMs: rlUser.resetMs }));
@@ -317,17 +363,25 @@ export class ChatRoom implements DurableObject {
       }
     }
 
-    // Sanitize + validate
+    // Sanitize + validate. NOTE: dm_* rooms carry E2E ciphertext
+    // (enc:...). The server cannot moderate plaintext it cannot decrypt —
+    // clients MUST sanitize after decrypt (see public clients). Ciphertext
+    // that fails sanitize (control chars etc.) is still rejected here.
     const s = sanitizeMessage(obj.body);
     if (!s.ok) {
       this.sendError(ws, s.error!);
       return;
     }
     const cleanBody = s.value!;
+    const isE2ECipher = cleanBody.startsWith("enc:");
 
-    // Moderation hook — flag or block before broadcast (privacy: no IP passed)
+    // Moderation hook — flag or block before broadcast (privacy: no IP passed).
+    // E2E ciphertext cannot be content-moderated server-side; enforce sender
+    // rate limits + length, skip blocklist on ciphertext (would false-positive).
     const modHook = createModerationHook(this.env as unknown as { MODERATION_KEY?: string });
-    const mod = await modHook(cleanBody, { userId: meta.userId, roomId: vRoom.value!, ip: "***" });
+    const mod = isE2ECipher
+      ? { allowed: true as const, flagged: false as const }
+      : await modHook(cleanBody, { userId: meta.userId, roomId: vRoom.value!, ip: "***" });
     if (!mod.allowed) {
       log("warn", "moderation.blocked_broadcast", { roomId: vRoom.value, userId: hashForLog(meta.userId), reason: mod.reason });
       ws.send(JSON.stringify({ type: "moderation", allowed: false, reason: mod.reason, ts: Date.now() }));
@@ -360,7 +414,7 @@ export class ChatRoom implements DurableObject {
     }
 
     // Broadcast to room (respect blocks: don't deliver to users who blocked sender, or where sender blocked viewer? we do viewer-blocks-sender)
-    this.broadcast(vRoom.value!, { type: "message", message: chatMsg }, undefined);
+    await this.broadcast(vRoom.value!, { type: "message", message: chatMsg }, undefined);
   }
 
   async webSocketClose(ws: WebSocket, code: number, _reason: string, _wasClean: boolean): Promise<void> {
@@ -368,16 +422,18 @@ export class ChatRoom implements DurableObject {
     this.sessions.delete(ws);
     if (meta) {
       log("info", "room.leave", { userId: hashForLog(meta.userId), code });
-      const anyRoom = await this.inferRoomId();
+      // Use the closing session's bound room — inferRoomId() returns null for
+      // new rooms with no messages yet, which previously skipped peer-close.
+      const anyRoom = meta.roomId || (await this.inferRoomId());
       if (anyRoom) {
-        this.broadcast(anyRoom, { type: "presence", event: "leave", userId: meta.userId, ts: Date.now() }, meta.userId);
+        await this.broadcast(anyRoom, { type: "presence", event: "leave", userId: meta.userId, ts: Date.now() }, meta.userId);
         // 2-person ephemeral: if one refreshes/closes, close the peer's tab as well (refresh erases → peer closed)
         const remaining = [...this.sessions.values()];
         const hibernated = this.state.getWebSockets().map((w) => w.deserializeAttachment() as SessionMeta | null).filter(Boolean) as SessionMeta[];
         const totalRemaining = remaining.length + hibernated.length;
         // Notify remaining peers to close (refresh on any device closes the other)
         if (totalRemaining > 0) {
-          this.broadcast(anyRoom, { type: "peer_closed", reason: "peer_refreshed", ts: Date.now() });
+          await this.broadcast(anyRoom, { type: "peer_closed", reason: "peer_refreshed", ts: Date.now() });
           // also force-close remaining sockets so they trigger onclose → window.close fallback
           for (const s of this.state.getWebSockets()) {
             try { s.close(4000, "peer_refreshed"); } catch {}
@@ -432,14 +488,16 @@ export class ChatRoom implements DurableObject {
     if (body.reason.length < 3) return Response.json({ error: "Reason too short" }, { status: 400 });
     // Sanitize reason
     if (/[<>]/.test(body.reason)) return Response.json({ error: "Invalid characters in reason" }, { status: 400 });
-    // Rate-limit reports per user
+    // Rate-limit reports per user (strong keys). Auth is verified below;
+    // pre-check here only to shed load — final decision after auth.
     const tokenTmp = extractBearer(req);
     if (tokenTmp) {
       const secretTmp = this.env.JWT_SECRET;
       if (secretTmp) {
         const claimsTmp = await verifyJwt(tokenTmp, secretTmp);
         if (claimsTmp && this.env.RATE_LIMITER) {
-          const rl = await this.checkRateLimitWithDo(`report:user:${hashForLog(claimsTmp.userId)}`, { limit: 5, windowMs: 60_000 });
+          const rlKey = await hashForRateLimit(`report:user:${claimsTmp.userId}`);
+          const rl = await this.checkRateLimitWithDo(rlKey, { limit: 5, windowMs: 60_000 });
           if (!rl.allowed) return Response.json({ error: "Rate limited" }, { status: 429 });
         }
       }
@@ -454,9 +512,19 @@ export class ChatRoom implements DurableObject {
     const claims = await verifyJwt(token, secret);
     if (!claims) return Response.json({ error: "Invalid token" }, { status: 401 });
 
+    // Bound in-memory + storage reports to prevent unbounded growth (DoS).
+    // Keep last 100 reports per room; reports carry no message body.
     this.reportedMessages.push({ messageId: body.messageId, reporterId: claims.userId, reason: body.reason.slice(0, 500), ts: Date.now() });
-    // Persist minimally (no message body, no PII beyond reporterId)
+    if (this.reportedMessages.length > 100) this.reportedMessages.splice(0, this.reportedMessages.length - 100);
     await this.storage.put(`reports:${Date.now()}:${crypto.randomUUID()}`, { messageId: body.messageId, reporterId: claims.userId, reason: body.reason.slice(0, 500), ts: Date.now() });
+    // Trim stored reports to last 100
+    {
+      const all = await this.storage.list({ prefix: "reports:" });
+      if (all.size > 100) {
+        const keys = [...all.keys()].sort().slice(0, all.size - 100);
+        for (const k of keys) await this.storage.delete(k);
+      }
+    }
 
     log("info", "room.report", { messageId: body.messageId.slice(0, 8), reporterId: claims.userId, roomId: body.roomId ?? "unknown" });
     return Response.json({ ok: true });
@@ -468,14 +536,15 @@ export class ChatRoom implements DurableObject {
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(body.blockedUserId)) return Response.json({ error: "Invalid userId" }, { status: 400 });
     // Prevent self-block already checked after auth, but also validate length
     if (body.blockedUserId.length > 64) return Response.json({ error: "Invalid userId" }, { status: 400 });
-    // Rate-limit block spam
+    // Rate-limit block spam (strong keys)
     const tokenTmp2 = extractBearer(req);
     if (tokenTmp2) {
       const s2 = this.env.JWT_SECRET;
       if (s2) {
         const c2 = await verifyJwt(tokenTmp2, s2);
         if (c2 && this.env.RATE_LIMITER) {
-          const rl = await this.checkRateLimitWithDo(`block:user:${hashForLog(c2.userId)}`, { limit: 10, windowMs: 60_000 });
+          const rlKey2 = await hashForRateLimit(`block:user:${c2.userId}`);
+          const rl = await this.checkRateLimitWithDo(rlKey2, { limit: 10, windowMs: 60_000 });
           if (!rl.allowed) return Response.json({ error: "Rate limited" }, { status: 429 });
         }
       }
@@ -498,6 +567,11 @@ export class ChatRoom implements DurableObject {
       this.blockedUsers.set(claims.userId, set);
     }
     set.add(body.blockedUserId);
+    // Bound block lists (50 per user) to prevent storage exhaustion
+    while (set.size > 50) {
+      const first = set.values().next().value as string;
+      set.delete(first);
+    }
     await this.storage.put(`blocks:${claims.userId}`, [...set]);
 
     log("info", "room.block", { userId: claims.userId, blockedId: body.blockedUserId });
@@ -505,7 +579,13 @@ export class ChatRoom implements DurableObject {
   }
 
   private async handleRestMessage(req: Request): Promise<Response> {
-    // Optional REST send (rate-limited, same sanitization)
+    // Optional REST send (rate-limited, same sanitization).
+    // SECURITY FIX: the Worker routes to this DO by URL roomId
+    // (idFromName(urlRoom)). The body roomId MUST equal the URL roomId —
+    // previously body.roomId was trusted, letting POST /room/A/message store
+    // + broadcast as roomB (cross-room spoof / storage pollution).
+    const url = new URL(req.url);
+    const urlRoom = url.searchParams.get("roomId") || "";
     const body = (await req.json().catch(() => null)) as { roomId?: string; body?: string } | null;
     if (!body?.roomId || typeof body.body !== "string") return Response.json({ error: "roomId and body required" }, { status: 400 });
     const token = extractBearer(req);
@@ -519,18 +599,28 @@ export class ChatRoom implements DurableObject {
 
     const vRoom = validateRoomId(body.roomId);
     if (!vRoom.ok) return Response.json({ error: vRoom.error }, { status: 400 });
-    // For REST, ensure the caller is not spoofing a different room — the DO itself is that room,
-    // so we validate the DO's room matches the payload (when routed via Worker idFromName(body.roomId)).
-    // Worker already routes to correct DO, but double-check via storage prefix if needed.
+    if (urlRoom && urlRoom !== vRoom.value) {
+      return Response.json({ error: "roomId mismatch (URL vs body)" }, { status: 400 });
+    }
     const allowed = await this.checkMembership(claims.userId, vRoom.value!);
     if (!allowed) return Response.json({ error: "Forbidden" }, { status: 403 });
+
+    // REST rate-limit (was missing — WS path was limited, REST was not)
+    if (this.env.RATE_LIMITER) {
+      const rlKey = await hashForRateLimit(`msg:user:${claims.userId}`);
+      const rl = await this.checkRateLimitWithDo(rlKey, { limit: 20, windowMs: 10_000 });
+      if (!rl.allowed) return Response.json({ error: "Rate limited", retryAfterMs: rl.resetMs }, { status: 429 });
+    }
 
     const s = sanitizeMessage(body.body);
     if (!s.ok) return Response.json({ error: s.error }, { status: 400 });
 
     const modHook = createModerationHook(this.env as unknown as { MODERATION_KEY?: string });
     const ip = req.headers.get("CF-Connecting-IP") || "unknown";
-    const mod = await modHook(s.value!, { userId: claims.userId, roomId: vRoom.value!, ip });
+    const isCipher = s.value!.startsWith("enc:");
+    const mod = isCipher
+      ? { allowed: true as const, flagged: false as const }
+      : await modHook(s.value!, { userId: claims.userId, roomId: vRoom.value!, ip });
     if (!mod.allowed) return Response.json({ error: mod.reason, flagged: true }, { status: 422 });
 
     const msg: ChatMessage = {
@@ -544,7 +634,7 @@ export class ChatRoom implements DurableObject {
       flagReason: mod.reason,
     };
     await this.appendHistory(msg);
-    this.broadcast(vRoom.value!, { type: "message", message: msg });
+    await this.broadcast(vRoom.value!, { type: "message", message: msg });
     return Response.json({ ok: true, message: msg });
   }
 
@@ -564,9 +654,9 @@ export class ChatRoom implements DurableObject {
     const ttl = msg.roomId.startsWith("dm_") ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
     const alarmAt = Date.now() + ttl;
     const cur = await this.storage.getAlarm();
+    // FIX: old code called setAlarm twice when cur===null (second call
+    // overwrote the TTL alarm with now+1h). Set exactly once.
     if (cur === null || alarmAt < cur) await this.storage.setAlarm(alarmAt);
-    // Also ensure periodic GC if already scheduled far
-    if (cur === null) await this.storage.setAlarm(Date.now() + 60 * 60 * 1000);
     // Trim oldest if over limit (list + delete)
     const all = await this.storage.list<ChatMessage>({ prefix: `messages:${msg.roomId}:` });
     if (all.size > MAX_ROOM_HISTORY) {
@@ -585,18 +675,27 @@ export class ChatRoom implements DurableObject {
     return out;
   }
 
-  private broadcast(roomId: string, data: unknown, excludeUserId?: string): void {
+  private async broadcast(roomId: string, data: unknown, excludeUserId?: string): Promise<void> {
+    void roomId;
     const payload = JSON.stringify(data);
-    // Deliver with per-recipient block check
+    const senderId = (data as { message?: ChatMessage })?.message?.userId;
+    // Deliver with per-recipient block check. Previously only the in-memory
+    // map was consulted, so after eviction (or for recipients never loaded)
+    // blocked senders' live messages were delivered. Now storage-backed.
     for (const [ws, meta] of this.sessions) {
       if (excludeUserId && meta.userId === excludeUserId && (data as Record<string, unknown>).type === "presence") {
         // don't send join/leave to self? we do send to self for presence? skip self for join to avoid echo
         continue;
       }
-      // Check if viewer blocked sender
-      const senderId = (data as { message?: ChatMessage })?.message?.userId;
-      if (senderId && this.blockedUsers.get(meta.userId)?.has(senderId)) continue;
-      // Also check async isBlocked for those not in memory — best effort: we already have memory set
+      if (senderId) {
+        let blockedSet = this.blockedUsers.get(meta.userId);
+        if (!blockedSet) {
+          const stored = await this.storage.get<string[]>(`blocks:${meta.userId}`);
+          blockedSet = new Set(stored ?? []);
+          this.blockedUsers.set(meta.userId, blockedSet);
+        }
+        if (blockedSet.has(senderId)) continue;
+      }
       try {
         if (ws.readyState === 1) ws.send(payload);
       } catch {
@@ -626,9 +725,19 @@ export class ChatRoom implements DurableObject {
 
   private checkLocalRateLimit(key: string, limit: number, windowMs: number): boolean {
     const now = Date.now();
+    // Opportunistically GC idle keys to prevent unbounded memory growth
+    if (this.msgCounts.size > 1000) {
+      for (const [k, arr] of this.msgCounts) {
+        if (arr.length === 0 || now - arr[arr.length - 1] > windowMs * 2) this.msgCounts.delete(k);
+        if (this.msgCounts.size <= 500) break;
+      }
+    }
     const arr = this.msgCounts.get(key) ?? [];
     const recent = arr.filter((t) => now - t < windowMs);
-    if (recent.length >= limit) return false;
+    if (recent.length >= limit) {
+      this.msgCounts.set(key, recent);
+      return false;
+    }
     recent.push(now);
     this.msgCounts.set(key, recent);
     return true;
@@ -646,6 +755,13 @@ export class ChatRoom implements DurableObject {
         await this.storage.delete(k);
         deleted++;
       }
+    }
+    // GC stale reports older than 24h (bounded storage)
+    const reports = await this.storage.list({ prefix: "reports:" });
+    for (const k of reports.keys()) {
+      const parts = k.split(":");
+      const ts = parseInt(parts[1] || "0", 10);
+      if (ts && now - ts > 24 * 60 * 60 * 1000) await this.storage.delete(k);
     }
     // If no sessions and no messages, clean up fully; else reschedule
     const sessions = this.state.getWebSockets().length;

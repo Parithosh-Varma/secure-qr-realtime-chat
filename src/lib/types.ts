@@ -8,6 +8,8 @@ export type SessionClaims = UserIdentity & {
   iat: number;
   exp: number;
   jti: string;
+  iss: string;
+  aud: string;
 };
 
 export type QrStatus = "pending" | "approved" | "claimed" | "expired" | "denied";

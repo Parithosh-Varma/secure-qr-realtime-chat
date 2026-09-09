@@ -11,6 +11,11 @@ export function sanitizeMessage(input: unknown): { ok: boolean; value?: string; 
   if (typeof input !== "string") return { ok: false, error: "Message must be a string" };
   let s = input.normalize("NFC");
 
+  // Strip bidi overrides / zero-width / invisible chars (spoofing, CVE-style visual attacks).
+  // These are never legitimate in chat and survive HTML-escaping.
+  // eslint-disable-next-line no-misleading-character-class
+  s = s.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u00AD]/g, "");
+
   // reject null bytes and most control chars (allow \n \t)
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(s)) {
@@ -58,6 +63,9 @@ export function validateDisplayName(input: unknown): { ok: boolean; value?: stri
   if (input === undefined || input === null) return { ok: true, value: undefined };
   if (typeof input !== "string") return { ok: false, error: "displayName must be string" };
   let s = input.normalize("NFC").trim();
+  // Strip invisible/bidi chars before length checks so "aaaa\u200B..." can't bypass limits
+  // eslint-disable-next-line no-misleading-character-class
+  s = s.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u00AD]/g, "");
   if (s.length === 0) return { ok: true, value: undefined };
   if (s.length > 24) return { ok: false, error: "displayName too long (max 24)" };
   if (s.length < 2) return { ok: false, error: "displayName too short (min 2)" };

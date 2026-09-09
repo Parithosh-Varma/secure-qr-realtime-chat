@@ -1,8 +1,12 @@
 // Mobile — scan to chat directly, nickname-only, ephemeral, E2E on dm_*.
+// A reload is only terminal once inside the chat: pre-auth reloads boot fresh
+// and must never land on about:blank.
 try {
   const nav = performance.getEntriesByType && performance.getEntriesByType("navigation")[0];
   const isReload = (nav && nav.type === "reload") || (performance.navigation && performance.navigation.type === 1);
-  if (isReload) {
+  let wasInChat = false;
+  try { wasInChat = sessionStorage.getItem("qrchat.m.inchat") === "1"; } catch {}
+  if (isReload && wasInChat) {
     try { localStorage.clear(); sessionStorage.clear(); } catch {}
     try { history.replaceState(null, "", "about:blank"); } catch {}
     location.href = "about:blank";
@@ -22,8 +26,9 @@ const confirm = $("#confirm");
 const dock = $("#dock");
 let mobileJwt = ""; // ephemeral
 let mobileDisplay = "";
-let privateRoomM = null;
+let privateRoomM = null; // ALWAYS server-provided via preview — never derived locally
 let e2eKeyM = null;
+let currentAuthTokenM = null;
 
 function showConfirm(open) {
   if (confirm) confirm.classList.toggle("open", open);
@@ -38,31 +43,44 @@ function secureSuffixM(len){
   let s=btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   return s.slice(0,len);
 }
-function getTokenFromUrl(){
-  // Prefer fragment #token= (not sent to server) for privacy, fallback to ?token= for backwards compat
+function getInviteFromUrl(){
+  // New format: #a=<authToken>&e=<e2eSecret> (fragment never hits network).
+  // Legacy: #token=<authToken> or ?token=<authToken> (no E2E secret).
   try{
-    const hash=location.hash.match(/token=([^&]+)/);
-    if(hash) return decodeURIComponent(hash[1]);
+    const frag=(location.hash||"").replace(/^#/,"");
+    const fp=new URLSearchParams(frag);
+    const a=fp.get("a"), e=fp.get("e"), t=fp.get("token");
+    if(a) return {authToken:decodeURIComponent(a), e2eSecret:e?decodeURIComponent(e):null};
+    if(t) return {authToken:decodeURIComponent(t), e2eSecret:null};
     const qs=new URL(location.href).searchParams.get("token");
-    if(qs) return qs;
+    if(qs) return {authToken:qs, e2eSecret:null};
   }catch{}
   return null;
 }
-async function deriveE2EKeyM(rawToken) {
-  if (!rawToken) return null;
+function getTokenFromUrl(){
+  // Backwards-compat shim — returns authToken only. New code uses getInviteFromUrl().
+  const inv=getInviteFromUrl();
+  return inv?inv.authToken:null;
+}
+async function deriveE2EKeyM(e2eSecret) {
+  // E2E key from the QR e2eSecret ONLY — never from the auth token the
+  // server sees. Domain-separated so legacy authToken-derived keys differ.
+  if (!e2eSecret) return null;
   try{
     const enc=new TextEncoder();
-    const ikm=await crypto.subtle.importKey("raw", enc.encode(rawToken), {name:"HKDF"}, false, ["deriveKey"]);
+    const ikm=await crypto.subtle.importKey("raw", enc.encode("qrchat-e2e-v1:"+e2eSecret), {name:"HKDF"}, false, ["deriveKey"]);
     return await crypto.subtle.deriveKey({name:"HKDF", hash:"SHA-256", salt:new Uint8Array(0), info:enc.encode("qrchat-e2e-v1")}, ikm, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
   }catch{
-    const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawToken));
+    const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("qrchat-e2e-v1:"+e2eSecret));
     return crypto.subtle.importKey("raw", h, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
   }
 }
-async function roomIdFromTokenM(rawToken){
-  const buf=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawToken));
-  const hex=[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,"0")).join("");
-  return `dm_${hex.slice(0,12)}`;
+function sanitizeDecryptedM(s){
+  if(typeof s!=="string") return "";
+  s=s.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u00AD]/g, "");
+  // eslint-disable-next-line no-control-regex
+  s=s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+  return s.slice(0,2000);
 }
 async function e2eEncryptM(plain, key) {
   if (!key || !privateRoomM || !privateRoomM.startsWith("dm_")) return plain;
@@ -108,9 +126,11 @@ async function joinChatM() {
   if (wrap) wrap.classList.add("open");
   if (st) st.textContent = `connected · ${room} (2-person, E2E)`;
   if (!mobileJwt) { mSystem("Mint a nickname first"); return; }
+  try { sessionStorage.setItem("qrchat.m.inchat", "1"); } catch {}
   if (mWs) try { mWs.close(); } catch {}
-  const url = `${wsBase2()}/api/room/${encodeURIComponent(room)}/ws?token=${encodeURIComponent(mobileJwt)}`;
-  mWs = new WebSocket(url);
+  // Prefer Sec-WebSocket-Protocol for the JWT (no URL leakage).
+  try{ mWs = new WebSocket(`${wsBase2()}/api/room/${encodeURIComponent(room)}/ws`, ["bearer", mobileJwt]); }
+  catch{ mWs = new WebSocket(`${wsBase2()}/api/room/${encodeURIComponent(room)}/ws?token=${encodeURIComponent(mobileJwt)}`); }
   mWs.onopen = () => { mSystem(`You joined ${room} as ${mobileDisplay || "anon"} — E2E on`); if (btn) btn.disabled = false; if (inp) inp.focus(); };
   mWs.onmessage = async (e) => {
     try {
@@ -119,7 +139,8 @@ async function joinChatM() {
         // Privacy: suppress history — fresh 1:1 only
         if (d.history?.length) console.log("history suppressed", d.history.length);
       } else if (d.type === "message") {
-        const body = await e2eDecryptM(d.message.body, e2eKeyM);
+        const raw = await e2eDecryptM(d.message.body, e2eKeyM);
+        const body = sanitizeDecryptedM(raw);
         const mine = d.message.userId === (JSON.parse(atob(mobileJwt.split(".")[1]))?.userId);
         mAppend(`${d.message.displayName || d.message.userId}: ${body}`, mine);
       } else if (d.type === "presence") mSystem(`${d.userId} ${d.event}ed`);
@@ -144,29 +165,36 @@ async function joinChatM() {
 $("#login")?.addEventListener("click", async () => {
   const nick = ($("#userId")?.value || "").trim() || `anon-${(crypto.randomUUID ? crypto.randomUUID().slice(0,4) : secureSuffixM(4))}`;
   if (nick.length < 2 || nick.length > 24) return alert("Nickname 2–24 chars");
-  const tmpId = `u_${(crypto.randomUUID ? crypto.randomUUID().replace(/-/g,'').slice(0,8) : secureSuffixM(8))}_${Date.now().toString(36)}`;
-  const res = await fetch(api2("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: tmpId, displayName: nick }) });
+  // Guest login: server generates the userId; send displayName ONLY.
+  let res=await fetch(api2("/api/auth/guest-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ displayName: nick }) });
+  if(res.status===404) res=await fetch(api2("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ displayName: nick }) });
   const data = await res.json().catch(() => ({}));
   if (data.token) {
     mobileJwt = data.token; mobileDisplay = nick;
-    privateRoomM = `dm_${(crypto.randomUUID ? crypto.randomUUID().replace(/-/g,'').slice(0,8) : secureSuffixM(8))}${Date.now().toString(36).slice(-4)}`;
-    if (loginOut) loginOut.textContent = `Ready as ${nick} · private ${privateRoomM} (2-person, refresh erases)`;
+    if (loginOut) loginOut.textContent = `Ready as ${nick} · ephemeral (scan a QR to join)`;
   } else if (loginOut) loginOut.textContent = "Could not mint — try again";
 });
-async function doPreview(t) {
+async function doPreview(authToken) {
   if (previewOut) previewOut.textContent = "Checking…";
-  const res = await fetch(api2(`/api/auth/qr/preview?token=${encodeURIComponent(t)}`));
+  // Token via header (no URL leakage). Server returns fingerprint/location
+  // for the explicit consent screen.
+  const res = await fetch(api2(`/api/auth/qr/preview`),{headers:{"X-QR-Token":authToken}});
   const data = await res.json().catch(() => ({}));
   if (data.status === "pending" || (res.ok && data.status)) {
     const left = data.expiresAt ? Math.max(0, Math.round((data.expiresAt - Date.now()) / 1000)) : "?";
     const host = data.host ? `${data.host.displayName || data.host.userId}` : "Host";
-    privateRoomM = data.roomId || privateRoomM;
-    e2eKeyM = await deriveE2EKeyM(t);
+    // SERVER-authoritative roomId — never derive locally (old bug used 12-hex).
+    privateRoomM = data.roomId || null;
+    currentAuthTokenM = authToken;
     if (previewOut) previewOut.textContent = `${host} invited you — 1:1 E2E · ${left}s left`;
     if (details) {
       details.innerHTML = "";
-      [ `Private room — only 2`, `Expires in ${left}s` ]
-        .forEach((x) => { const li = document.createElement("li"); li.textContent = x; details.appendChild(li); });
+      const fp=data.fingerprint||{};
+      const rows=[ `Private room — only 2`, `Expires in ${left}s` ];
+      if(fp.city||fp.country) rows.push(`Login from: ${[fp.city,fp.country].filter(Boolean).join(", ")}`);
+      if(fp.userAgent) rows.push(`Device: ${String(fp.userAgent).slice(0,80)}`);
+      if(fp.acceptLanguage) rows.push(`Lang: ${fp.acceptLanguage}`);
+      rows.forEach((x) => { const li = document.createElement("li"); li.textContent = x; details.appendChild(li); });
     }
     const ack = $("#ack"), approve = $("#approve");
     if (ack) ack.checked = false;
@@ -182,24 +210,30 @@ async function doPreview(t) {
 $("#preview")?.addEventListener("click", async () => {
   const raw = ($("#token")?.value || "").trim();
   if (!raw) return;
-  let t = raw;
+  // Accept pasted invite URLs in new (#a=&e=) or legacy (#token=/?token=) form
+  let authToken = raw, e2eSecret = null;
   try {
-    // support both fragment and query token URLs
-    const hashMatch = raw.match(/[#&]token=([^&]+)/);
-    if (hashMatch) t = decodeURIComponent(hashMatch[1]);
-    else { const u = new URL(raw); const p = u.searchParams.get("token") || (u.hash.match(/token=([^&]+)/)?.[1] ? decodeURIComponent(u.hash.match(/token=([^&]+)/)[1]) : null); if (p) t = p; }
+    const hashMatch = raw.match(/[#&][ae]=([^&]+)/);
+    if (raw.includes("#a=") || raw.includes("&e=") || raw.includes("#token=")) {
+      const frag = raw.slice(raw.indexOf("#")+1);
+      const fp = new URLSearchParams(frag);
+      if (fp.get("a")) { authToken = decodeURIComponent(fp.get("a")); e2eSecret = fp.get("e") ? decodeURIComponent(fp.get("e")) : null; }
+      else if (fp.get("token")) { authToken = decodeURIComponent(fp.get("token")); }
+    } else if (hashMatch) authToken = decodeURIComponent(hashMatch[1]);
+    else { const u = new URL(raw); const p = u.searchParams.get("token") || (u.hash.match(/token=([^&]+)/)?.[1] ? decodeURIComponent(u.hash.match(/token=([^&]+)/)[1]) : null); if (p) authToken = p; }
   } catch {}
-  $("#token").value = t;
-  await doPreview(t);
+  if (e2eSecret) e2eKeyM = await deriveE2EKeyM(e2eSecret);
+  $("#token").value = authToken;
+  await doPreview(authToken);
 });
 $("#ack")?.addEventListener("change", (e) => { const a = $("#approve"); if (a) a.disabled = !e.target.checked; });
 $("#approve")?.addEventListener("click", async () => {
   const token = ($("#token")?.value || "").trim();
   if (!mobileJwt) return alert("Mint a nickname first (enter above)");
   if (!token) return alert("Paste token");
-  e2eKeyM = await deriveE2EKeyM(token);
-  privateRoomM = privateRoomM || await roomIdFromTokenM(token); // hash-based — matches worker dm_${tokenHash.slice(0,12)}
-  const res = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token, action: "approve" }) });
+  if (!$("#ack")?.checked) return alert("Please confirm you checked the login details first");
+  if (!privateRoomM) return alert("Preview the invite first so we know the correct room");
+  const res = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token, action: "approve", confirmedFingerprint: true }) });
   if (res.ok) {
     showConfirm(false);
     if (previewOut) previewOut.textContent = "Approved — opening E2E chat…";
@@ -213,7 +247,7 @@ $("#approve")?.addEventListener("click", async () => {
 $("#deny")?.addEventListener("click", async () => {
   const token = ($("#token")?.value || "").trim();
   if (!mobileJwt) return alert("Mint first");
-  const res = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token, action: "deny" }) });
+  const res = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token, action: "deny", confirmedFingerprint: true }) });
   if (res.ok) { showConfirm(false); if (previewOut) previewOut.textContent = "Denied."; }
   else alert("Deny failed");
 });
@@ -223,45 +257,38 @@ $("#paste")?.addEventListener("click", async () => {
 async function ensureMobileSession() {
   if (mobileJwt) return true;
   const nick = `anon-${(crypto.randomUUID ? crypto.randomUUID().slice(0,4) : secureSuffixM(4))}`;
-  const tmpId = `u_${(crypto.randomUUID ? crypto.randomUUID().replace(/-/g,'').slice(0,8) : secureSuffixM(8))}_${Date.now().toString(36)}`;
-  const res = await fetch(api2("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: tmpId, displayName: nick }) });
+  let res=await fetch(api2("/api/auth/guest-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ displayName: nick }) });
+  if(res.status===404) res=await fetch(api2("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ displayName: nick }) });
   const data = await res.json().catch(() => ({}));
   if (data.token) { mobileJwt = data.token; mobileDisplay = nick; if (loginOut) loginOut.textContent = `Joined as ${nick} — ephemeral`; return true; }
   return false;
 }
+// SECURITY: scanning a QR MUST show the fingerprint consent screen first.
+// The old silent auto-approve (join + approve without user tap) was removed:
+// we stash the invite, clear it from the URL, ensure a guest session, fetch
+// preview (device/location/expiry), and wait for explicit Approve.
 try {
-  const p = getTokenFromUrl();
-  if (p) {
-    $("#token").value = p;
-    e2eKeyM = await deriveE2EKeyM(p);
-    privateRoomM = await roomIdFromTokenM(p);
-    // Hide token from address bar immediately (privacy) — keep it only in memory (clear both hash and query)
+  const inv = getInviteFromUrl();
+  if (inv) {
+    $("#token").value = inv.authToken;
+    if (inv.e2eSecret) e2eKeyM = await deriveE2EKeyM(inv.e2eSecret);
+    else { e2eKeyM = null; mSystem("Legacy invite — no E2E secret. Ask for a new QR for full E2E."); }
+    currentAuthTokenM = inv.authToken;
+    // Hide invite from address bar immediately (privacy) — keep only in memory
     try{ history.replaceState(null, "", location.pathname + location.search.replace(/[\?&]token=[^&]+/g,'').replace(/^&/,'?')); }catch{}
-    try{ if(location.hash.includes("token=")) history.replaceState(null, "", location.pathname + location.search); }catch{}
-    // Ensure hash cleared
+    try{ if(location.hash) history.replaceState(null, "", location.pathname + location.search); }catch{}
     if(location.hash) try{ location.hash=""; }catch{}
-    // Hide UI instantly (no flash) — already hidden via html.scanned CSS, ensure chat visible
-    const ic = document.getElementById("inviteCard");
-    if (ic) ic.style.display = "none";
-    const nickCard = document.querySelector(".card");
-    if (nickCard) nickCard.style.display = "none";
-    const chatWrap = document.getElementById("chatWrap");
-    if (chatWrap) chatWrap.classList.add("open");
-    // Direct chat after scan — no preview, no approve UI, just join
     await ensureMobileSession();
-    // silent approve — no UI
-    try { await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token: p, action: "approve" }) }); } catch {}
-    joinChatM();
-    const h1 = document.querySelector("h1");
-    if (h1) h1.innerHTML = "Chat<br><em>with me</em>";
-    const sub = document.querySelector(".sub");
-    if (sub) sub.textContent = "Connected via QR — just chat.";
+    await doPreview(inv.authToken);
+    mSystem("Check the login details above, tick confirm, then Approve — never auto-joins.");
   }
 } catch {}
 // Refresh on any device closes the other tab (ephemeral 2-person)
 window.addEventListener("beforeunload", () => { try { mWs?.close(1000, "refresh"); } catch {} });
 window.addEventListener("keydown", (e) => {
   if (e.key === "F5" || (e.ctrlKey && e.key.toLowerCase() === "r") || (e.metaKey && e.key.toLowerCase() === "r")) {
+    const inChat = document.getElementById("chatWrap")?.classList.contains("open") || (mWs && mWs.readyState === 1);
+    if (!inChat) return;
     e.preventDefault();
     try { mWs?.close(1000, "refresh"); } catch {}
     setTimeout(() => { try { window.close(); } catch {} location.href = "about:blank"; }, 80);

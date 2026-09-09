@@ -3,6 +3,9 @@ import type { SessionClaims, UserIdentity } from "./types";
 
 const HEADER = { alg: "HS256", typ: "JWT" };
 
+export const JWT_ISSUER = "secure-chat-workers";
+export const JWT_AUDIENCE = "secure-chat-client";
+
 function encode(obj: unknown): string {
   return base64UrlEncode(new TextEncoder().encode(JSON.stringify(obj)));
 }
@@ -19,6 +22,8 @@ export async function signJwt(identity: UserIdentity, secret: string, ttlMs: num
     iat: now,
     exp: now + Math.floor(ttlMs / 1000),
     jti: crypto.randomUUID(),
+    iss: JWT_ISSUER,
+    aud: JWT_AUDIENCE,
   };
   const h = encode(HEADER);
   const p = encode(claims);
@@ -55,6 +60,9 @@ export async function verifyJwt(token: string, secret: string): Promise<SessionC
     if (claims.exp !== undefined && claims.iat !== undefined && claims.exp <= claims.iat) return null;
     if (!claims.userId) return null;
     if (claims.jti !== undefined && typeof claims.jti !== "string") return null;
+    // Fail closed on issuer/audience — tokens minted before iss/aud are rejected
+    if (claims.iss !== JWT_ISSUER) return null;
+    if (claims.aud !== JWT_AUDIENCE) return null;
     return claims;
   } catch {
     return null;
@@ -65,4 +73,25 @@ export function extractBearer(req: Request): string | null {
   const h = req.headers.get("Authorization") || "";
   const m = h.match(/^Bearer\s+(.+)$/i);
   return m ? m[1].trim() : null;
+}
+
+/**
+ * Extract a chat JWT for WebSocket upgrades where browsers cannot set
+ * Authorization headers. Prefers Sec-WebSocket-Protocol (no URL leakage),
+ * falls back to ?token= only for backwards compat (deprecated, logged).
+ * QR opaque tokens must NEVER use this — they use X-QR-Token / POST body.
+ */
+export function extractWsJwt(req: Request, url: URL): { token: string | null; viaQuery: boolean } {
+  const bearer = extractBearer(req);
+  if (bearer) return { token: bearer, viaQuery: false };
+  const proto = req.headers.get("Sec-WebSocket-Protocol") || "";
+  // Client may offer "bearer, <jwt>" — take the last non-"bearer" token
+  if (proto) {
+    const parts = proto.split(",").map((s) => s.trim()).filter(Boolean);
+    const candidate = parts.filter((p) => p.toLowerCase() !== "bearer").pop();
+    if (candidate && candidate.length > 20) return { token: candidate, viaQuery: false };
+  }
+  const q = url.searchParams.get("token");
+  if (q) return { token: q, viaQuery: true };
+  return { token: null, viaQuery: false };
 }

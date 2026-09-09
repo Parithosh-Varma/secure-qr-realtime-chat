@@ -62,6 +62,10 @@ function originMatches(origin: string, pattern: string): boolean {
   // pattern like https://*.qrchat.pages.dev
   try {
     const o = new URL(origin);
+    // Enforce https for non-local origins — an http subdomain must never
+    // match an https allowlist entry (credentialed CORS).
+    const isLocalOrigin = o.hostname === "localhost" || o.hostname === "127.0.0.1" || o.hostname === "::1";
+    if (!isLocalOrigin && o.protocol !== "https:") return false;
     const p = pattern.replace(/^https:\/\/\*\./, "https://");
     // for wildcard, allow any subdomain of base
     if (pattern.includes("*.")) {
@@ -80,20 +84,12 @@ export function requireHttps(req: Request): Response | null {
   const host = url.hostname;
   const isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1";
   if (!isLocal && url.protocol !== "https:") {
-    // SECURITY: do not trust Host header for open redirect — redirect to same URL with https scheme
-    // Cloudflare enforces Host via zone, but we avoid reflecting arbitrary Host.
-    const allowedHosts = new Set(["qrchat.pages.dev", "secure-chat-workers.parithosh.workers.dev"]);
-    // If host is unexpected but not local, still redirect safely using URL object (no Host poisoning)
-    const safeHost = allowedHosts.has(url.hostname) ? url.host : url.host;
-    const httpsUrl = `https://${safeHost}${url.pathname}${url.search}`;
-    // Validate that httpsUrl is still same host (defense in depth)
-    try {
-      const parsed = new URL(httpsUrl);
-      if (parsed.hostname !== url.hostname) return new Response("Invalid host", { status: 400 });
-    } catch {
-      return new Response("Invalid URL", { status: 400 });
-    }
-    return Response.redirect(httpsUrl, 301);
+    // SECURITY FIX (was open-redirect via reflected Host):
+    // Never 301 to a Host-derived URL — Host is attacker-controlled and the
+    // old allowlist branch was dead code (`a ? url.host : url.host`).
+    // Cloudflare edge already redirects http->https; at the Worker layer we
+    // fail closed with 426 so no attacker host is ever reflected.
+    return Response.json({ error: "HTTPS required" }, { status: 426 });
   }
   // Also enforce WSS for WebSocket upgrades — same check (ws:// -> wss://)
   return null;

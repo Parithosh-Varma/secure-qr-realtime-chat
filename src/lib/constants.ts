@@ -25,8 +25,9 @@ export const ALLOWED_ORIGINS = [
 
 export const CSP_VALUE = [
   "default-src 'self'",
-  // Inline script hashes for mobile scanned check — covers both spaced and unspaced variants (fallback vs Pages)
-  "script-src 'self' 'sha256-fTWPLI4DgOpI9p+2v3EpL47bxpzpE58sQecp+7hgg0s=' 'sha256-M67uEYBMiVBIUccM2gXgT8fw3VfiYh71yc/4ZWx1UA0='",
+  // No inline scripts: mobile/desktop have no <script> blocks (consent flow
+  // needs no head inline JS). Keep script-src locked to 'self' only.
+  "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
   "img-src 'self' data: blob:",
