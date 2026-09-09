@@ -3,6 +3,9 @@ export const QR_TTL_MIN = 60_000;
 export const QR_TTL_MAX = 120_000;
 export const JWT_TTL_MS = 3_600_000; // 1h short-lived session
 export const MAX_MESSAGE_LENGTH = 2000;
+// Roomier cap for E2E ciphertext only: base64 inflates ~33%, so a 2000-char
+// plaintext becomes ~2700 chars on the wire (8 KiB payload cap still bounds).
+export const MAX_CIPHERTEXT_LENGTH = 4000;
 export const MAX_PAYLOAD_BYTES = 8 * 1024; // 8 KiB
 export const MAX_ROOM_HISTORY = 100;
 export const RATE_LIMIT = {

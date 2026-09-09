@@ -1,0 +1,15 @@
+{
+  "name": "Secure Chat",
+  "short_name": "SecureChat",
+  "description": "Ephemeral 2-person E2E chat — scan to join, refresh erases.",
+  "start_url": "/mobile",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0A0A0B",
+  "theme_color": "#0A0A0B",
+  "icons": [
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/favicon.png", "sizes": "256x256", "type": "image/png" }
+  ]
+}

@@ -167,6 +167,27 @@ public/desktop.html, public/mobile.html, public/client/*.js
 
 ---
 
+## Operations
+
+**Funnel (all privacy-safe — hashed IDs only, no bodies/tokens):** track
+`qr.created → qr.approved → qr.claimed → room.join` conversion in
+`wrangler tail` / Workers Logs. Spikes in `qr.approve_failed`,
+`room.forbidden`, or `rate_limited` are your early warning for QR-phishing
+or breakage. `npm test` covers the security-critical pure functions
+(`sanitize`, `jwt`, `approve`, `crypto`); CI also asserts the Worker-embedded
+fallbacks match `public/` (`scripts/sync-fallbacks.py --check`).
+
+**Flags:** production guest minting requires `ENABLE_DEV_LOGIN=true`
+(`wrangler deploy --var ENABLE_DEV_LOGIN:true`); `TURNSTILE_SECRET` enables
+bot checks but needs the frontend widget first — don't set one without the other.
+
+**JWT secret rotation:** sessions live 1h. To rotate: `wrangler secret put
+JWT_SECRET` with the new value — worst case, active sessions re-mint on next
+scan. There is no dual-secret overlap window (see `src/lib/jwt.ts`); if you
+need zero-interruption rotation, add a `kid` header + old-secret grace verify.
+
+---
+
 ## License
 
 MIT — guest login mints anonymous ephemeral IDs only (enable prod with `ENABLE_DEV_LOGIN=true`); wire real IdP JWTs to `mobile/approve` for persistent identities.

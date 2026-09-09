@@ -27,7 +27,7 @@ const dock = $("#dock");
 let mobileJwt = ""; // ephemeral
 let mobileDisplay = "";
 let privateRoomM = null; // ALWAYS server-provided via preview — never derived locally
-let e2eKeyM = null;
+let e2eSecretM = null; // raw QR e2eSecret; per-epoch keys derived on demand
 let currentAuthTokenM = null;
 
 function showConfirm(open) {
@@ -62,7 +62,10 @@ function getTokenFromUrl(){
   const inv=getInviteFromUrl();
   return inv?inv.authToken:null;
 }
+const E2E_EPOCH_MS = 900000; // 15-min key rotation window (forward secrecy)
+const e2eKeyCacheM = new Map(); // "v1" | "v2:<epoch>" -> CryptoKey (capped)
 async function deriveE2EKeyM(e2eSecret) {
+  // v1 legacy derive — kept so messages from older clients still decrypt.
   // E2E key from the QR e2eSecret ONLY — never from the auth token the
   // server sees. Domain-separated so legacy authToken-derived keys differ.
   if (!e2eSecret) return null;
@@ -75,6 +78,31 @@ async function deriveE2EKeyM(e2eSecret) {
     return crypto.subtle.importKey("raw", h, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
   }
 }
+async function deriveE2EKeyMV2(e2eSecret, epoch) {
+  // Per-epoch data key: compromise of one window's key decrypts at most that
+  // window. Epoch rides in the envelope, so no clock sync is needed.
+  if (!e2eSecret || !Number.isSafeInteger(epoch) || epoch < 0) return null;
+  const tag="qrchat-e2e-v2:"+e2eSecret+":"+epoch;
+  try{
+    const enc=new TextEncoder();
+    const ikm=await crypto.subtle.importKey("raw", enc.encode(tag), {name:"HKDF"}, false, ["deriveKey"]);
+    return await crypto.subtle.deriveKey({name:"HKDF", hash:"SHA-256", salt:new Uint8Array(0), info:enc.encode("qrchat-e2e-v2")}, ikm, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
+  }catch{
+    const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(tag));
+    return crypto.subtle.importKey("raw", h, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  }
+}
+async function e2eKeyForM(secret, epoch){
+  const id=epoch==null?"v1":"v2:"+epoch;
+  let k=e2eKeyCacheM.get(id);
+  if(k) return k;
+  k=epoch==null?await deriveE2EKeyM(secret):await deriveE2EKeyMV2(secret,epoch);
+  if(k){
+    e2eKeyCacheM.set(id,k);
+    if(e2eKeyCacheM.size>8) e2eKeyCacheM.delete(e2eKeyCacheM.keys().next().value);
+  }
+  return k;
+}
 function sanitizeDecryptedM(s){
   if(typeof s!=="string") return "";
   s=s.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u00AD]/g, "");
@@ -82,15 +110,37 @@ function sanitizeDecryptedM(s){
   s=s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
   return s.slice(0,2000);
 }
-async function e2eEncryptM(plain, key) {
-  if (!key || !privateRoomM || !privateRoomM.startsWith("dm_")) return plain;
+async function e2eEncryptM(plain, secret) {
+  if (!secret || !privateRoomM || !privateRoomM.startsWith("dm_")) return plain;
+  const epoch=Math.floor(Date.now()/E2E_EPOCH_MS);
+  const key=await e2eKeyForM(secret,epoch);
+  if(!key) return plain;
+  // AAD binds ciphertext to this room + epoch (no cross-room/time replay).
+  const aad=new TextEncoder().encode(`${privateRoomM}:${epoch}`);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(plain));
-  return `enc:${btoa(String.fromCharCode(...new Uint8Array(ct)))}.${btoa(String.fromCharCode(...iv))}`;
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: aad }, key, new TextEncoder().encode(plain));
+  return `enc2:${epoch}.${btoa(String.fromCharCode(...new Uint8Array(ct)))}.${btoa(String.fromCharCode(...iv))}`;
 }
-async function e2eDecryptM(payload, key) {
-  if (!key || typeof payload !== "string" || !payload.startsWith("enc:")) return payload;
+async function e2eDecryptM(payload, secret, roomId) {
+  if (!secret || typeof payload !== "string") return payload;
+  if (payload.startsWith("enc2:")) {
+    try {
+      const [epochS, b64ct, b64iv] = payload.slice(5).split(".");
+      const epoch=parseInt(epochS,10);
+      if(!Number.isSafeInteger(epoch)||epoch<0||!b64ct||!b64iv) return payload;
+      const key=await e2eKeyForM(secret,epoch);
+      if(!key) return payload;
+      const aad=new TextEncoder().encode(`${roomId||privateRoomM}:${epoch}`);
+      const ct = Uint8Array.from(atob(b64ct), (c) => c.charCodeAt(0));
+      const iv = Uint8Array.from(atob(b64iv), (c) => c.charCodeAt(0));
+      const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: aad }, key, ct);
+      return new TextDecoder().decode(pt);
+    } catch { return payload; }
+  }
+  if (!payload.startsWith("enc:")) return payload;
   try {
+    const key=await e2eKeyForM(secret,null);
+    if(!key) return payload;
     const [b64ct, b64iv] = payload.slice(4).split(".");
     const ct = Uint8Array.from(atob(b64ct), (c) => c.charCodeAt(0));
     const iv = Uint8Array.from(atob(b64iv), (c) => c.charCodeAt(0));
@@ -99,12 +149,13 @@ async function e2eDecryptM(payload, key) {
   } catch { return payload; }
 }
 let mWs = null;
-function mAppend(text, mine) {
+function mAppend(text, mine, cid) {
+  if (mine && cid) mSettlePending(cid);
   const wrap = $("#mmsgs");
   if (!wrap) return;
   const d = document.createElement("div");
   d.className = "mrow" + (mine ? " me" : "");
-  if (mine) d.innerHTML = `<div class="mbub"></div>`;
+  if (mine) d.innerHTML = `<div class="mbub"></div><div class="mpstat tick">✓✓</div>`;
   else d.innerHTML = `<div class="ava"></div><div class="mbub"></div>`;
   const b = d.querySelector(".mbub");
   if (b) b.textContent = text;
@@ -154,10 +205,13 @@ async function joinChatM() {
         // Privacy: suppress history — fresh 1:1 only
         if (d.history?.length) console.log("history suppressed", d.history.length);
       } else if (d.type === "message") {
-        const raw = await e2eDecryptM(d.message.body, e2eKeyM);
+        const raw = await e2eDecryptM(d.message.body, e2eSecretM, d.message.roomId);
         const body = sanitizeDecryptedM(raw);
         const mine = d.message.userId === (JSON.parse(atob(mobileJwt.split(".")[1]))?.userId);
-        mAppend(`${d.message.displayName || d.message.userId}: ${body}`, mine);
+        mAppend(`${d.message.displayName || d.message.userId}: ${body}`, mine, d.cid);
+      } else if (d.type === "ack" && d.cid) {
+        const p = mPending.get(d.cid);
+        if (p) { clearTimeout(p.timer); const st = p.el.querySelector(".mpstat"); if (st) st.textContent = "✓✓ delivered"; }
       } else if (d.type === "presence") mSystem(`${d.userId} ${d.event}ed`);
       else if (d.type === "typing") { const who=d.displayName||d.userId||"Peer"; if(d.typing) mShowTyping(who); else mHideTyping(); }
       else if (d.type === "peer_closed") { mSystem("Peer refreshed — closing tab…"); setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; }, 800); try{ mWs.close(); }catch{} }
@@ -170,18 +224,58 @@ async function joinChatM() {
     mSystem("Disconnected — refresh erases (ephemeral)"); const b = $("#mSend"); if (b) b.disabled = true;
   };
   }
-  const send = async () => {
-    const v = inp?.value.trim();
-    if (!v || !mWs || mWs.readyState !== 1) return;
-    mSendTyping(false);
-    const out = await e2eEncryptM(v, e2eKeyM);
-    mWs.send(JSON.stringify({ type: "message", roomId: room, body: out }));
-    if (inp) inp.value = "";
-  };
-  btn?.addEventListener("click", send);
-  inp?.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
-  inp?.addEventListener("input", () => { mSendTyping(!!inp.value.trim()); });
-  inp?.addEventListener("blur", () => mSendTyping(false));
+  const send = async () => { await mSendCurrent(); };
+  // Bound once: re-joining must not stack duplicate listeners (that caused
+  // double-sends). mSendCurrent reads live module state.
+  if (btn && !btn.dataset.tbound) { btn.dataset.tbound = "1"; btn.addEventListener("click", () => mSendCurrent()); }
+  if (inp && !inp.dataset.tbound) {
+    inp.dataset.tbound = "1";
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); mSendCurrent(); } });
+    inp.addEventListener("input", () => { mSendTyping(!!inp.value.trim()); });
+    inp.addEventListener("blur", () => mSendTyping(false));
+  }
+}
+// Module-scope send: always uses the CURRENT room/socket (no stale closures).
+async function mSendCurrent(){
+  const inpEl = $("#mInput");
+  const v = inpEl?.value.trim();
+  if (!v || !mWs || mWs.readyState !== 1) return;
+  mSendTyping(false);
+  const out = await e2eEncryptM(v, e2eSecretM);
+  const cid = crypto.randomUUID();
+  mRenderPending(v, cid);
+  try { mWs.send(JSON.stringify({ type: "message", roomId: privateRoomM || "general", body: out, cid })); }
+  catch { mFailPending(cid); }
+  if (inpEl) inpEl.value = "";
+}
+// Pending bubbles: "sending…" until the server ack or our own echo lands.
+const mPending = new Map(); // cid -> {el, timer}
+function mRenderPending(bodyText, cid){
+  const wrap = $("#mmsgs");
+  if (!wrap) return;
+  const d = document.createElement("div");
+  d.className = "mrow me pending"; d.dataset.cid = cid;
+  d.innerHTML = `<div class="mbub"></div><div class="mpstat"><span class="spin"></span>sending…</div>`;
+  const b = d.querySelector(".mbub");
+  if (b) b.textContent = bodyText;
+  wrap.appendChild(d);
+  wrap.scrollTop = wrap.scrollHeight;
+  const timer = setTimeout(() => mFailPending(cid), 8000);
+  mPending.set(cid, { el: d, timer });
+}
+function mFailPending(cid){
+  const p = cid && mPending.get(cid);
+  if (!p) return;
+  clearTimeout(p.timer); mPending.delete(cid);
+  const st = p.el.querySelector(".mpstat");
+  if (st) st.textContent = "not delivered — retry";
+  p.el.classList.add("failed");
+}
+function mSettlePending(cid){
+  const p = cid && mPending.get(cid);
+  if (!p) return;
+  clearTimeout(p.timer); mPending.delete(cid);
+  p.el.remove();
 }
 // --- typing indicator (loading animation while peer types) ---
 let mTypingSent=false, mTypingIdle=null, mTypingThrottle=0, mTypingHideT=null;
@@ -265,7 +359,7 @@ $("#preview")?.addEventListener("click", async () => {
     } else if (hashMatch) authToken = decodeURIComponent(hashMatch[1]);
     else { const u = new URL(raw); const p = u.searchParams.get("token") || (u.hash.match(/token=([^&]+)/)?.[1] ? decodeURIComponent(u.hash.match(/token=([^&]+)/)[1]) : null); if (p) authToken = p; }
   } catch {}
-  if (e2eSecret) e2eKeyM = await deriveE2EKeyM(e2eSecret);
+  if (e2eSecret) e2eSecretM = e2eSecret;
   $("#token").value = authToken;
   await doPreview(authToken);
 });
@@ -353,8 +447,7 @@ try {
   const inv = getInviteFromUrl();
   if (inv) {
     $("#token").value = inv.authToken;
-    if (inv.e2eSecret) e2eKeyM = await deriveE2EKeyM(inv.e2eSecret);
-    else { e2eKeyM = null; }
+    e2eSecretM = inv.e2eSecret || null;
     currentAuthTokenM = inv.authToken;
     // Hide invite from address bar immediately (privacy) — keep only in memory
     try{ history.replaceState(null, "", location.pathname + location.search.replace(/[\?&]token=[^&]+/g,'').replace(/^&/,'?')); }catch{}

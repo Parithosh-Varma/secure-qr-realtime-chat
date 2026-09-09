@@ -17,7 +17,7 @@ import { log, hashForLog, hashForRateLimit } from "../lib/logger";
 import { sanitizeMessage, validateRoomId } from "../lib/sanitize";
 import { createModerationHook } from "../lib/moderation";
 import type { ChatMessage } from "../lib/types";
-import { MAX_PAYLOAD_BYTES, MAX_ROOM_HISTORY } from "../lib/constants";
+import { MAX_PAYLOAD_BYTES, MAX_ROOM_HISTORY, MAX_MESSAGE_LENGTH, MAX_CIPHERTEXT_LENGTH } from "../lib/constants";
 import { verifyJwt, extractBearer, extractWsJwt } from "../lib/jwt";
 
 /**
@@ -410,16 +410,24 @@ export class ChatRoom implements DurableObject {
     }
 
     // Sanitize + validate. NOTE: dm_* rooms carry E2E ciphertext
-    // (enc:...). The server cannot moderate plaintext it cannot decrypt —
-    // clients MUST sanitize after decrypt (see public clients). Ciphertext
-    // that fails sanitize (control chars etc.) is still rejected here.
-    const s = sanitizeMessage(obj.body);
+    // (enc:... v1, enc2:... v2). The server cannot moderate plaintext it
+    // cannot decrypt — clients MUST sanitize after decrypt (see public
+    // clients). Ciphertext that fails sanitize (control chars etc.) is still
+    // rejected here. Ciphertext gets a roomier cap: base64 inflates ~33%, so
+    // a 2000-char plaintext becomes ~2700 chars on the wire (8 KiB payload
+    // cap is the real bound).
+    const rawBody = typeof obj.body === "string" ? obj.body : "";
+    const looksCipher = rawBody.startsWith("enc:") || rawBody.startsWith("enc2:");
+    const s = sanitizeMessage(obj.body, looksCipher ? MAX_CIPHERTEXT_LENGTH : MAX_MESSAGE_LENGTH);
     if (!s.ok) {
       this.sendError(ws, s.error!);
       return;
     }
     const cleanBody = s.value!;
-    const isE2ECipher = cleanBody.startsWith("enc:");
+    const isE2ECipher = cleanBody.startsWith("enc:") || cleanBody.startsWith("enc2:");
+    // Opaque client correlation id (echoed in ack + broadcast echo so the
+    // sender can settle its pending bubble). Capped, never trusted.
+    const clientId = typeof obj.cid === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(obj.cid) ? obj.cid : undefined;
 
     // Moderation hook — flag or block before broadcast (privacy: no IP passed).
     // E2E ciphertext cannot be content-moderated server-side; enforce sender
@@ -460,7 +468,11 @@ export class ChatRoom implements DurableObject {
     }
 
     // Broadcast to room (respect blocks: don't deliver to users who blocked sender, or where sender blocked viewer? we do viewer-blocks-sender)
-    await this.broadcast(vRoom.value!, { type: "message", message: chatMsg }, undefined);
+    await this.broadcast(vRoom.value!, { type: "message", message: chatMsg, ...(clientId ? { cid: clientId } : {}) }, undefined);
+    // Delivery receipt for the sender's pending bubble (stored + fanned out).
+    try {
+      ws.send(JSON.stringify({ type: "ack", cid: clientId ?? null, id: chatMsg.id, ts: chatMsg.ts }));
+    } catch {}
   }
 
   async webSocketClose(ws: WebSocket, code: number, _reason: string, _wasClean: boolean): Promise<void> {
@@ -586,7 +598,7 @@ export class ChatRoom implements DurableObject {
       }
     }
 
-    log("info", "room.report", { messageId: body.messageId.slice(0, 8), reporterId: claims.userId, roomId: body.roomId ?? "unknown" });
+    log("info", "room.report", { messageId: body.messageId.slice(0, 8), reporterId: hashForLog(claims.userId), roomId: body.roomId ?? "unknown" });
     return Response.json({ ok: true });
   }
 
@@ -634,7 +646,7 @@ export class ChatRoom implements DurableObject {
     }
     await this.storage.put(`blocks:${claims.userId}`, [...set]);
 
-    log("info", "room.block", { userId: claims.userId, blockedId: body.blockedUserId });
+    log("info", "room.block", { userId: hashForLog(claims.userId), blockedId: hashForLog(body.blockedUserId) });
     return Response.json({ ok: true, blocked: [...set] });
   }
 
@@ -646,7 +658,7 @@ export class ChatRoom implements DurableObject {
     // + broadcast as roomB (cross-room spoof / storage pollution).
     const url = new URL(req.url);
     const urlRoom = url.searchParams.get("roomId") || "";
-    const body = (await req.json().catch(() => null)) as { roomId?: string; body?: string } | null;
+    const body = (await req.json().catch(() => null)) as { roomId?: string; body?: string; cid?: string } | null;
     if (!body?.roomId || typeof body.body !== "string") return Response.json({ error: "roomId and body required" }, { status: 400 });
     const token = extractBearer(req);
     if (!token) return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -672,12 +684,13 @@ export class ChatRoom implements DurableObject {
       if (!rl.allowed) return Response.json({ error: "Rate limited", retryAfterMs: rl.resetMs }, { status: 429 });
     }
 
-    const s = sanitizeMessage(body.body);
+    const looksCipher = body.body.startsWith("enc:") || body.body.startsWith("enc2:");
+    const s = sanitizeMessage(body.body, looksCipher ? MAX_CIPHERTEXT_LENGTH : MAX_MESSAGE_LENGTH);
     if (!s.ok) return Response.json({ error: s.error }, { status: 400 });
 
     const modHook = createModerationHook(this.env as unknown as { MODERATION_KEY?: string });
     const ip = req.headers.get("CF-Connecting-IP") || "unknown";
-    const isCipher = s.value!.startsWith("enc:");
+    const isCipher = s.value!.startsWith("enc:") || s.value!.startsWith("enc2:");
     const mod = isCipher
       ? { allowed: true as const, flagged: false as const }
       : await modHook(s.value!, { userId: claims.userId, roomId: vRoom.value!, ip });
@@ -695,7 +708,8 @@ export class ChatRoom implements DurableObject {
     };
     await this.appendHistory(msg);
     await this.broadcast(vRoom.value!, { type: "message", message: msg });
-    return Response.json({ ok: true, message: msg });
+    const clientId = typeof body.cid === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(body.cid) ? body.cid : undefined;
+    return Response.json({ ok: true, message: msg, ...(clientId ? { cid: clientId } : {}) });
   }
 
   // ---- Helpers ----

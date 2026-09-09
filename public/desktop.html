@@ -74,6 +74,10 @@
     @media (prefers-reduced-motion:reduce){.spin{animation:none; border-top-color:rgba(255,255,255,.2)}}
     .qr-card .spin{border-color:rgba(0,0,0,.15); border-top-color:#000}
     .conn{display:none; width:fit-content; margin:0 auto 6px; font-size:12px; color:#9A9AA3; border:1px solid rgba(255,255,255,.08); background:#101014; border-radius:99px; padding:5px 12px}
+    .row.pending{opacity:.75}
+    .pstat{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:#6B6B74; margin-top:4px}
+    .row.failed .pstat{color:#FF8585}
+    .pstat.tick{color:#9A9AA3}
   </style>
 </head>
 <body>
@@ -101,9 +105,9 @@
     </main>
   </div>
 
-  <div id="qrModal" class="hide"></div><div id="hero" class="hide"></div><div id="debug" class="hide"></div><div id="toasts" class="toast-stack"></div>
+  <div id="qrModal" class="hide"></div><div id="hero" class="hide"></div><div id="debug" class="hide"></div><div id="toasts" class="toast-stack" role="status" aria-live="polite"></div>
   <div class="hide"><span id="roomName"></span><span id="gen"></span><span id="heroLinkBtn"></span><span id="qrClose"></span><span id="menuBtn"></span><span id="newChatBtn"></span></div>
-  <script src="/config.js?v=4"></script>
-  <script type="module" src="/client/desktop.js?v=4"></script>
+  <script src="/config.js?v=5"></script>
+  <script type="module" src="/client/desktop.js?v=5"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-import { MAX_MESSAGE_LENGTH } from "./constants";
+import { MAX_MESSAGE_LENGTH, MAX_CIPHERTEXT_LENGTH } from "./constants";
 
 /**
  * Server-side sanitization. Never trust client.
@@ -7,7 +7,8 @@ import { MAX_MESSAGE_LENGTH } from "./constants";
  * - normalize whitespace, reject control chars
  * - prepared-statement friendly (no SQL metachars handling needed beyond parameterization)
  */
-export function sanitizeMessage(input: unknown): { ok: boolean; value?: string; error?: string } {
+
+export function sanitizeMessage(input: unknown, maxLength = MAX_MESSAGE_LENGTH): { ok: boolean; value?: string; error?: string } {
   if (typeof input !== "string") return { ok: false, error: "Message must be a string" };
   let s = input.normalize("NFC");
 
@@ -24,7 +25,7 @@ export function sanitizeMessage(input: unknown): { ok: boolean; value?: string; 
 
   s = s.trim();
   if (s.length === 0) return { ok: false, error: "Message cannot be empty" };
-  if (s.length > MAX_MESSAGE_LENGTH) return { ok: false, error: `Message too long (max ${MAX_MESSAGE_LENGTH})` };
+  if (s.length > maxLength) return { ok: false, error: `Message too long (max ${maxLength})` };
 
   // Escape HTML entities so that even if client does element.innerHTML = body, it is safe.
   // We intentionally escape rather than strip so user intent is preserved visibly.

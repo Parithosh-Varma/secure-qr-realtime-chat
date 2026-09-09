@@ -9,6 +9,7 @@
   <link rel="icon" type="image/png" sizes="256x256" href="/favicon.png" media="(prefers-color-scheme: dark)" />
   <link rel="shortcut icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
   <style>
     :root{--void:#0A0A0B; --card:#131318; --raised:#1C1D23; --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.13); --txt:#ECECED; --mut:#9A9AA3; --dim:#6B6B74; --aura:#7AA2FF; --danger:#F4212E}
     *{box-sizing:border-box}
@@ -63,6 +64,10 @@
     .mrow.me .ava{display:none}
     .mbub{max-width:78%; font-size:13.5px; line-height:1.5; padding:9px 12px; border-radius:16px; border:1px solid var(--line); background:var(--raised)}
     .mrow.me .mbub{background:#fff; color:#000; border-color:#fff; border-radius:16px 16px 4px 16px}
+    .mrow.pending{opacity:.75}
+    .mpstat{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--dim); margin-top:3px; text-align:right}
+    .mrow.failed .mpstat{color:#FF8585}
+    .mpstat.tick{color:var(--mut)}
     .msys{text-align:center; color:var(--dim); font-family:"JetBrains Mono",monospace; font-size:11px; padding:6px}
     .composer{display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line)}
     .composer input{flex:1; background:var(--void); border:1px solid var(--line); color:var(--txt); border-radius:12px; padding:10px 12px; font-size:16px; outline:none}
@@ -108,7 +113,7 @@
     <button id="deny" class="btn btn-quiet" style="flex:1; color:#FF8585">Deny</button>
     <button id="approve" class="btn btn-primary" disabled>Approve & chat</button>
   </div></div>
-  <script src="/config.js?v=4"></script>
-  <script type="module" src="/client/mobile.js?v=4"></script>
+  <script src="/config.js?v=5"></script>
+  <script type="module" src="/client/mobile.js?v=5"></script>
 </body>
 </html>
