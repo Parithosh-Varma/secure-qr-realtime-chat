@@ -4,6 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Secure Chat — private</title>
+  <link rel="icon" type="image/png" sizes="256x256" href="/favicon-light.png" media="(prefers-color-scheme: light)" />
+  <link rel="icon" type="image/png" sizes="256x256" href="/favicon.png" media="(prefers-color-scheme: dark)" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <script src="/client/qrcode.min.js"></script>
   <style>
     *{box-sizing:border-box}
@@ -22,6 +26,7 @@
     .side-top{padding:14px 12px 6px}
     .logo{display:flex; gap:10px; align-items:center; padding:2px 6px}
     .mark{width:30px; height:30px; border-radius:50%; background:#fff; color:#000; display:grid; place-items:center; font-weight:700}
+    .mark-img{width:30px; height:30px; border-radius:8px; object-fit:cover; display:block; background:#000}
     .logo b{font-family:"Inter Tight",sans-serif; font-size:14px}
     .side-foot{border-top:1px solid rgba(255,255,255,.08); padding:12px; margin-top:auto}
     .user-card{display:flex; gap:10px; align-items:center; background:#0A0A0B; border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:9px 10px}
@@ -71,7 +76,7 @@
   <!-- Chat — hidden until scanned + connected (2-person) -->
   <div id="chatView" class="app hide">
     <aside class="side">
-      <div class="side-top"><div class="logo"><div class="mark">✕</div><b>Secure Chat</b></div></div>
+      <div class="side-top"><div class="logo"><img src="/logo.png" alt="Secure Chat logo" class="mark-img" width="30" height="30" /><b>Secure Chat</b></div></div>
       <div class="side-foot"><div class="user-card"><div class="avatar" id="avatar">?</div><div class="who"><b id="me">—</b><span id="meSub">ephemeral</span></div><button class="link-btn" id="linkDeviceBtn">Invite</button></div></div>
     </aside>
     <main class="main">

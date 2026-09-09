@@ -4,6 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Verify login — Secure Chat</title>
+  <link rel="icon" type="image/png" sizes="256x256" href="/favicon-light.png" media="(prefers-color-scheme: light)" />
+  <link rel="icon" type="image/png" sizes="256x256" href="/favicon.png" media="(prefers-color-scheme: dark)" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <script>try{ const hasTok = new URLSearchParams(location.search).has("token") || location.hash.includes("token="); if(hasTok){ document.documentElement.classList.add("scanned"); } }catch{}</script>
   <style>
     :root{--void:#0A0A0B; --card:#131318; --raised:#1C1D23; --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.13); --txt:#ECECED; --mut:#9A9AA3; --dim:#6B6B74; --aura:#7AA2FF; --danger:#F4212E}
@@ -17,6 +21,7 @@
     .mono{font-family:"JetBrains Mono",monospace}
     .top{position:sticky; top:0; background:rgba(10,10,11,.8); backdrop-filter:blur(12px); border-bottom:1px solid var(--line)}
     .top-inner{max-width:520px; margin:0 auto; padding:13px 18px; display:flex; align-items:center; gap:12px}
+    .brand-logo{width:28px; height:28px; border-radius:7px; object-fit:cover; display:block; background:#000}
     .back{border:1px solid var(--line); color:var(--txt); width:32px; height:32px; border-radius:10px; display:grid; place-items:center; text-decoration:none}
     .top-inner b{font-family:"Inter Tight",sans-serif; font-size:14.5px}
     .wrap{max-width:520px; margin:0 auto; padding:22px 18px 120px}
@@ -64,7 +69,7 @@
   </style>
 </head>
 <body>
-  <header class="top"><div class="top-inner"><a class="back" href="/" aria-label="Back">←</a><b>Chat with me</b></div></header>
+  <header class="top"><div class="top-inner"><a class="back" href="/" aria-label="Back">←</a><img src="/logo.png" alt="Secure Chat logo" class="brand-logo" width="28" height="28" /><b>Chat with me</b></div></header>
   <div class="wrap">
     <h1>Scan to chat<br><em>with me</em></h1>
     <p class="sub">Mint your session, scan the QR on my screen, confirm — then we’re in the same room. Direct.</p>
