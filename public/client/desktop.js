@@ -223,13 +223,18 @@ async function gen(){
     if(qrEl) qrEl.innerHTML='<div class="empty">Render failed</div>';
   }
 }
-function tryWs(authToken){
-  try{
-    // Prefer Sec-WebSocket-Protocol over ?token= (no URL leakage). Server
-    // supports both; query is deprecated.
-    try{ ws=new WebSocket(`${wsBase()}/api/auth/qr/ws`, ["qr", authToken]); }
-    catch{ ws=new WebSocket(`${wsBase()}/api/auth/qr/ws?token=${encodeURIComponent(authToken)}`); }
-    ws.onmessage=(e)=>{
+function tryWs(authToken, protoTried=true){
+  // Prefer Sec-WebSocket-Protocol over ?token= (no URL leakage). If the
+  // handshake fails before opening (e.g. server didn't echo the subprotocol),
+  // retry once with the deprecated ?token= query. Polling covers us anyway.
+  const openWaiter=(useProto)=>{
+    const w=useProto
+      ? new WebSocket(`${wsBase()}/api/auth/qr/ws`, ["qr", authToken])
+      : new WebSocket(`${wsBase()}/api/auth/qr/ws?token=${encodeURIComponent(authToken)}`);
+    let opened=false;
+    w.onopen=()=>{ opened=true; };
+    w.onerror=()=>{ if(useProto && !opened){ try{w.close();}catch{} openWaiter(false); } else log("waiter error"); };
+    w.onmessage=(e)=>{
       try{
         const m=JSON.parse(e.data);
         if(m.status==="approved"){
@@ -243,8 +248,9 @@ function tryWs(authToken){
         if(m.status==="expired"){ setStatus("Expired"); cleanup(); }
       }catch{}
     };
-    ws.onerror=()=>{ log("waiter error"); };
-  }catch{}
+    ws=w;
+  };
+  try{ openWaiter(protoTried); }catch{ if(protoTried){ try{ openWaiter(false); }catch{} } }
 }
 function startPolling(authToken){
   if(pollTimer) clearInterval(pollTimer);
@@ -293,12 +299,27 @@ async function connectChat(roomId="general"){
   updateHero();
   if(!jwt){ setGated(true); openModal(); gen(); return; }
   try { sessionStorage.setItem("qrchat.inchat", "1"); } catch {}
-  // Prefer Sec-WebSocket-Protocol for the JWT (no URL leakage); fall back to
-  // ?token= only if the protocol handshake is rejected.
-  try{ chatWs=new WebSocket(`${wsBase()}/api/room/${encodeURIComponent(roomId)}/ws`, ["bearer", jwt]); }
-  catch{ chatWs=new WebSocket(`${wsBase()}/api/room/${encodeURIComponent(roomId)}/ws?token=${encodeURIComponent(jwt)}`); }
-  chatWs.onopen=()=>renderMe();
-  chatWs.onmessage=async(e)=>{
+  // Prefer Sec-WebSocket-Protocol for the JWT (no URL leakage). If the
+  // handshake fails before opening, retry once with ?token=.
+  openChatWs(roomId, true);
+  renderMe();
+}
+function openChatWs(roomId, useProto){
+  const base=`${wsBase()}/api/room/${encodeURIComponent(roomId)}/ws`;
+  const w=useProto
+    ? new WebSocket(base, ["bearer", jwt])
+    : new WebSocket(`${base}?token=${encodeURIComponent(jwt)}`);
+  chatWs=w;
+  let opened=false;
+  const retryQuery=()=>{
+    if(!useProto || opened || chatWs!==w) return;
+    try{ w.close(); }catch{}
+    try{ openChatWs(roomId, false); }catch{ appendSystem("Connection failed — retry"); }
+  };
+  w.onopen=()=>{ opened=true; renderMe(); };
+  w.onerror=()=>{ retryQuery(); };
+  w.onmessage=async(e)=>{
+    if(chatWs!==w) return;
     try{
       const d=JSON.parse(e.data);
       if(d.type==="welcome"){ updateHero(); if(d.history?.length) log("history suppressed",d.history.length); }
@@ -309,8 +330,11 @@ async function connectChat(roomId="general"){
       else if(d.type==="error") appendSystem(d.error.includes("full")?"Room full — only 2":"Error — try again");
     }catch{}
   };
-  chatWs.onclose=(e)=>{ if(e&&e.code===4000){ appendSystem("Peer refreshed — closing tab…"); setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; },500); return; } appendSystem("Disconnected — reload erases (ephemeral)"); renderMe(); };
-  renderMe();
+  w.onclose=(e)=>{
+    if(chatWs!==w) return;
+    if(!opened && useProto){ retryQuery(); return; }
+    if(e&&e.code===4000){ appendSystem("Peer refreshed — closing tab…"); setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; },500); return; } appendSystem("Disconnected — reload erases (ephemeral)"); renderMe();
+  };
 }
 async function appendMsg(m){
   const mine=identity&&m.userId===identity.userId;

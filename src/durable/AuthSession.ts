@@ -14,6 +14,18 @@
 import { log, hashForLog } from "../lib/logger";
 import type { QrSessionState, QrStatus, UserIdentity } from "../lib/types";
 
+/**
+ * Select a WebSocket subprotocol for the 101 response (see ChatRoom.ts).
+ * The desktop waiter offers ["qr", <authToken>]; echo "qr" so browsers don't
+ * fail the handshake for a missing selection.
+ */
+function selectWsSubprotocol(req: Request, name: string): HeadersInit | undefined {
+  const proto = req.headers.get("Sec-WebSocket-Protocol") || "";
+  const offered = proto.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (offered.includes(name.toLowerCase())) return { "Sec-WebSocket-Protocol": name };
+  return undefined;
+}
+
 type StoredState = {
   status: QrStatus;
   createdAt: number;
@@ -347,7 +359,8 @@ export class AuthSession implements DurableObject {
       } catch {}
     });
 
-    return new Response(null, { status: 101, webSocket: client });
+    const wsHeaders = selectWsSubprotocol(req, "qr");
+    return new Response(null, { status: 101, webSocket: client, ...(wsHeaders ? { headers: wsHeaders } : {}) });
   }
 
   private notifyWaiters(data: Record<string, unknown>) {

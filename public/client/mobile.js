@@ -128,11 +128,24 @@ async function joinChatM() {
   if (!mobileJwt) { mSystem("No session yet — reload to retry"); return; }
   try { sessionStorage.setItem("qrchat.m.inchat", "1"); } catch {}
   if (mWs) try { mWs.close(); } catch {}
-  // Prefer Sec-WebSocket-Protocol for the JWT (no URL leakage).
-  try{ mWs = new WebSocket(`${wsBase2()}/api/room/${encodeURIComponent(room)}/ws`, ["bearer", mobileJwt]); }
-  catch{ mWs = new WebSocket(`${wsBase2()}/api/room/${encodeURIComponent(room)}/ws?token=${encodeURIComponent(mobileJwt)}`); }
-  mWs.onopen = () => { mSystem(`You joined ${room} as ${mobileDisplay || "anon"} — E2E on`); if (btn) btn.disabled = false; if (inp) inp.focus(); };
-  mWs.onmessage = async (e) => {
+  // Prefer Sec-WebSocket-Protocol for the JWT (no URL leakage). If the
+  // handshake fails before opening, retry once with ?token=.
+  openChatWsM(room, true);
+  function openChatWsM(room, useProto){
+    const base=`${wsBase2()}/api/room/${encodeURIComponent(room)}/ws`;
+    const w=useProto
+      ? new WebSocket(base, ["bearer", mobileJwt])
+      : new WebSocket(`${base}?token=${encodeURIComponent(mobileJwt)}`);
+    mWs=w;
+    let opened=false;
+    const retryQuery=()=>{
+      if(!useProto || opened || mWs!==w) return;
+      try{ w.close(); }catch{}
+      try{ openChatWsM(room, false); }catch{ mSystem("Connection failed — retry"); }
+    };
+    w.onopen = () => { opened=true; mSystem(`You joined ${room} as ${mobileDisplay || "anon"} — E2E on`); if (btn) btn.disabled = false; if (inp) inp.focus(); };
+    w.onerror = () => { retryQuery(); };
+    w.onmessage = async (e) => {
     try {
       const d = JSON.parse(e.data);
       if (d.type === "welcome") {
@@ -147,10 +160,13 @@ async function joinChatM() {
       else if (d.type === "peer_closed") { mSystem("Peer refreshed — closing tab…"); setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; }, 800); try{ mWs.close(); }catch{} }
     } catch {}
   };
-  mWs.onclose = (e) => {
+  w.onclose = (e) => {
+    if(mWs!==w) return;
+    if(!opened && useProto){ retryQuery(); return; }
     if (e && e.code === 4000) { mSystem("Peer refreshed — closing tab…"); setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; }, 500); return; }
     mSystem("Disconnected — refresh erases (ephemeral)"); const b = $("#mSend"); if (b) b.disabled = true;
   };
+  }
   const send = async () => {
     const v = inp?.value.trim();
     if (!v || !mWs || mWs.readyState !== 1) return;

@@ -87,7 +87,7 @@
 | GET | `/api/auth/qr/preview?token=…` | none | for mobile confirmation screen |
 | POST | `/api/auth/mobile/approve` | **Bearer JWT** (mobile) | `{token, action}` → `approved/denied` |
 | POST | `/api/auth/qr/claim` | token-bound | burns token, returns `{token: jwt, identity}` — 202 pending, 410 burned |
-| POST | `/api/auth/dev-login` | none (IP-limited) | **dev only** — mints mobile JWT for testing |
+| POST | `/api/auth/guest-login` (`dev-login` alias) | none (IP-limited, flag-gated) | mints **anonymous ephemeral** guest JWT (server-generated ID, no email) |
 | GET (WS) | `/api/room/:roomId/ws` | **Bearer JWT** | chat — `?token=` also accepted for browser WS |
 | GET | `/api/room/:roomId/history` | **Bearer JWT** | filtered by blocks |
 | POST | `/api/report` | Bearer | `{messageId, reason, roomId}` |
@@ -130,7 +130,7 @@ npx wrangler d1 create chat-history
 ## Client examples
 
 - **`public/desktop.html` + `public/client/desktop.js`** — generate QR via `QRCode.toCanvas()`, hold WS waiter + 1.5s poll fallback, `claim` → store JWT in `localStorage`, auto-connect `WSS /api/room/general/ws`, send `{"type":"message","roomId":"general","body":"…"}` with local sanitization preview but server is authoritative.
-- **`public/mobile.html` + `public/client/mobile.js`** — dev-login mint, paste token (or open QR link with `?token=`), preview shows expiry + location, explicit `ack` checkbox gates Approve, calls `POST /api/auth/mobile/approve` with `Authorization: Bearer <mobileJwt>`.
+- **`public/mobile.html` + `public/client/mobile.js`** — silent guest mint on boot/scan, invite via `#a=`/`#e=` fragment, auto-join (presenter-opted-in) with host/device posted in-chat, manual preview + `ack` checkbox fallback, `POST /api/auth/mobile/approve` with `Authorization: Bearer <mobileJwt>`.
 
 Both also have **Worker-embedded fallbacks** (`worker.ts` `desktopFallbackHtml`/`mobileFallbackHtml`/`desktopJs`/`mobileJs`) so `npx wrangler dev` works even without a static assets binding.
 
@@ -169,4 +169,4 @@ public/desktop.html, public/mobile.html, public/client/*.js
 
 ## License
 
-MIT — do not use `dev-login` in production; wire real IdP JWTs to `mobile/approve`.
+MIT — guest login mints anonymous ephemeral IDs only (enable prod with `ENABLE_DEV_LOGIN=true`); wire real IdP JWTs to `mobile/approve` for persistent identities.

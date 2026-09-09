@@ -20,6 +20,19 @@ import type { ChatMessage } from "../lib/types";
 import { MAX_PAYLOAD_BYTES, MAX_ROOM_HISTORY } from "../lib/constants";
 import { verifyJwt, extractBearer, extractWsJwt } from "../lib/jwt";
 
+/**
+ * Select a WebSocket subprotocol for the 101 response. Browsers FAIL the
+ * handshake if they offered protocols and the server echoes none — so when
+ * the client authenticates via Sec-WebSocket-Protocol ("bearer"), we must
+ * select it back. Only ever echoes a protocol the client actually offered.
+ */
+function selectWsSubprotocol(req: Request, name: string): HeadersInit | undefined {
+  const proto = req.headers.get("Sec-WebSocket-Protocol") || "";
+  const offered = proto.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (offered.includes(name.toLowerCase())) return { "Sec-WebSocket-Protocol": name };
+  return undefined;
+}
+
 // Stored keys
 // messages:<roomId>:<ts>:<id> -> ChatMessage
 // blocks:<userId> -> Set<blockedUserId>
@@ -288,7 +301,8 @@ export class ChatRoom implements DurableObject {
     // Broadcast join presence (excluding sender's blocked users handled per-recipient)
     await this.broadcast(vRoom.value!, { type: "presence", event: "join", userId: claims.userId, displayName: claims.displayName, ts: Date.now() }, claims.userId);
 
-    return new Response(null, { status: 101, webSocket: client });
+    const wsHeaders = selectWsSubprotocol(req, "bearer");
+    return new Response(null, { status: 101, webSocket: client, ...(wsHeaders ? { headers: wsHeaders } : {}) });
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
