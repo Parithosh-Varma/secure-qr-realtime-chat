@@ -1,4 +1,4 @@
-// Mobile — scan to chat directly, nickname-only, ephemeral, E2E on dm_*.
+// Mobile — scan to chat directly, ephemeral, E2E on dm_*. No nickname anywhere.
 // A reload is only terminal once inside the chat: pre-auth reloads boot fresh
 // and must never land on about:blank.
 try {
@@ -125,7 +125,7 @@ async function joinChatM() {
   const room = privateRoomM || "general";
   if (wrap) wrap.classList.add("open");
   if (st) st.textContent = `connected · ${room} (2-person, E2E)`;
-  if (!mobileJwt) { mSystem("Mint a nickname first"); return; }
+  if (!mobileJwt) { mSystem("No session yet — reload to retry"); return; }
   try { sessionStorage.setItem("qrchat.m.inchat", "1"); } catch {}
   if (mWs) try { mWs.close(); } catch {}
   // Prefer Sec-WebSocket-Protocol for the JWT (no URL leakage).
@@ -162,18 +162,14 @@ async function joinChatM() {
   inp?.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
 }
 
-$("#login")?.addEventListener("click", async () => {
-  const nick = ($("#userId")?.value || "").trim() || `anon-${(crypto.randomUUID ? crypto.randomUUID().slice(0,4) : secureSuffixM(4))}`;
-  if (nick.length < 2 || nick.length > 24) return alert("Nickname 2–24 chars");
-  // Guest login: server generates the userId; send displayName ONLY.
-  let res=await fetch(api2("/api/auth/guest-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ displayName: nick }) });
-  if(res.status===404) res=await fetch(api2("/api/auth/dev-login"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ displayName: nick }) });
-  const data = await res.json().catch(() => ({}));
-  if (data.token) {
-    mobileJwt = data.token; mobileDisplay = nick;
-    if (loginOut) loginOut.textContent = `Ready as ${nick} · ephemeral (scan a QR to join)`;
-  } else if (loginOut) loginOut.textContent = "Could not mint — try again";
-});
+// No nickname UI — a silent ephemeral guest session is minted automatically
+// on boot (direct visits) or on scan. Identity is random anon + server
+// userId; refresh erases.
+if (!getInviteFromUrl()) {
+  ensureMobileSession().then((ok) => {
+    if (loginOut) loginOut.textContent = ok ? `Ready — ephemeral${mobileDisplay ? ` · ${mobileDisplay}` : ""}` : "Could not mint — reload to retry";
+  });
+}
 async function doPreview(authToken) {
   if (previewOut) previewOut.textContent = "Checking…";
   // Token via header (no URL leakage). Server returns fingerprint/location
@@ -229,7 +225,7 @@ $("#preview")?.addEventListener("click", async () => {
 $("#ack")?.addEventListener("change", (e) => { const a = $("#approve"); if (a) a.disabled = !e.target.checked; });
 $("#approve")?.addEventListener("click", async () => {
   const token = ($("#token")?.value || "").trim();
-  if (!mobileJwt) return alert("Mint a nickname first (enter above)");
+  if (!mobileJwt) return alert("Session not ready — reload and retry");
   if (!token) return alert("Paste token");
   if (!$("#ack")?.checked) return alert("Please confirm you checked the login details first");
   if (!privateRoomM) return alert("Preview the invite first so we know the correct room");
@@ -246,7 +242,7 @@ $("#approve")?.addEventListener("click", async () => {
 });
 $("#deny")?.addEventListener("click", async () => {
   const token = ($("#token")?.value || "").trim();
-  if (!mobileJwt) return alert("Mint first");
+  if (!mobileJwt) return alert("Session not ready — reload and retry");
   const res = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token, action: "deny", confirmedFingerprint: true }) });
   if (res.ok) { showConfirm(false); if (previewOut) previewOut.textContent = "Denied."; }
   else alert("Deny failed");

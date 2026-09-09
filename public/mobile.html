@@ -70,14 +70,11 @@
   <header class="top"><div class="top-inner"><a class="back" href="/" aria-label="Back">←</a><img src="/logo.png" alt="Secure Chat logo" class="brand-logo" width="28" height="28" /><b>Chat with me</b></div></header>
   <div class="wrap">
     <h1>Scan to chat<br><em>with me</em></h1>
-    <p class="sub">Mint your session, scan the QR on my screen, confirm — then we’re in the same room. Direct.</p>
+    <p class="sub">Scan the QR on my screen — you’re in the same room. Direct.</p>
 
     <section class="card">
-      <h2>1 · Your nickname</h2>
-      <p style="font-size:12px; color:var(--mut); margin:0 0 8px">No account. Random ephemeral ID · refresh erases.</p>
-      <input id="userId" type="text" placeholder="Your nickname" maxlength="24" autocomplete="off" aria-label="Nickname" />
-      <div class="row"><button id="login" class="btn btn-primary">Enter</button></div>
-      <p class="note" id="loginOut">No session yet — refreshing erases.</p>
+      <h2>Session</h2>
+      <p class="note" id="loginOut">Creating ephemeral session…</p>
     </section>
 
     <section class="card" id="inviteCard">
@@ -102,7 +99,7 @@
     <button id="deny" class="btn btn-quiet" style="flex:1; color:#FF8585">Deny</button>
     <button id="approve" class="btn btn-primary" disabled>Approve & chat</button>
   </div></div>
-  <script src="/config.js"></script>
-  <script type="module" src="/client/mobile.js"></script>
+  <script src="/config.js?v=2"></script>
+  <script type="module" src="/client/mobile.js?v=2"></script>
 </body>
 </html>
