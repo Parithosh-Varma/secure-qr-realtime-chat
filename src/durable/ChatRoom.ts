@@ -61,6 +61,9 @@ export class ChatRoom implements DurableObject {
 
   // In-memory session map keyed by WebSocket — rebuilt on wake via serializeAttachment
   private sessions = new Map<WebSocket, SessionMeta>();
+  // Last broadcast typing state per socket — used to dedupe high-frequency
+  // typing frames so one keystroke storm can't spam the room.
+  private typingState = new Map<WebSocket, boolean>();
 
   // In-memory rate counters fallback if RateLimiter DO unavailable (resets on eviction but DO alarm persists)
   private msgCounts = new Map<string, number[]>();
@@ -335,6 +338,35 @@ export class ChatRoom implements DurableObject {
       return;
     }
 
+    // Typing indicator — lightweight, never stored. Validated like messages
+    // but silently dropped (no error spam) on any mismatch, deduped per
+    // sender, and only delivered to OTHER sessions (never echoed).
+    if (obj.type === "typing") {
+      const tRoom = typeof obj.roomId === "string" ? obj.roomId : "";
+      const vr = validateRoomId(tRoom);
+      if (!vr.ok || vr.value !== meta.roomId) return;
+      const allowed = await this.checkMembership(meta.userId, vr.value!);
+      if (!allowed) return;
+      const typing = obj.typing === true;
+      if (this.typingState.get(ws) === typing) return;
+      this.typingState.set(ws, typing);
+      if (this.env.RATE_LIMITER) {
+        const tKey = await hashForRateLimit(`typing:user:${meta.userId}`);
+        const rl = await this.checkRateLimitWithDo(tKey, { limit: 15, windowMs: 10_000 });
+        if (!rl.allowed) return;
+      } else if (!this.checkLocalRateLimit(`typing:${meta.userId}`, 15, 10_000)) {
+        return;
+      }
+      await this.broadcastExcept(vr.value!, {
+        type: "typing",
+        userId: meta.userId,
+        displayName: meta.displayName,
+        typing,
+        ts: Date.now(),
+      }, ws);
+      return;
+    }
+
     if (obj.type !== "message") {
       this.sendError(ws, "Unknown message type");
       return;
@@ -434,6 +466,19 @@ export class ChatRoom implements DurableObject {
   async webSocketClose(ws: WebSocket, code: number, _reason: string, _wasClean: boolean): Promise<void> {
     const meta = this.sessions.get(ws) || (ws.deserializeAttachment() as SessionMeta | null);
     this.sessions.delete(ws);
+    // Clear stale typing so a reconnect doesn't leave a ghost indicator.
+    if (this.typingState.get(ws) && meta?.roomId) {
+      this.typingState.delete(ws);
+      await this.broadcastExcept(meta.roomId, {
+        type: "typing",
+        userId: meta.userId,
+        displayName: meta.displayName,
+        typing: false,
+        ts: Date.now(),
+      }, ws);
+    } else {
+      this.typingState.delete(ws);
+    }
     if (meta) {
       log("info", "room.leave", { userId: hashForLog(meta.userId), code });
       // Use the closing session's bound room — inferRoomId() returns null for
@@ -463,6 +508,7 @@ export class ChatRoom implements DurableObject {
   async webSocketError(ws: WebSocket, _error: unknown): Promise<void> {
     const meta = this.sessions.get(ws) || (ws.deserializeAttachment() as SessionMeta | null);
     this.sessions.delete(ws);
+    this.typingState.delete(ws);
     log("warn", "room.ws_error", { userId: meta?.userId ?? "unknown" });
   }
 
@@ -714,6 +760,30 @@ export class ChatRoom implements DurableObject {
         if (ws.readyState === 1) ws.send(payload);
       } catch {
         // remove dead
+        this.sessions.delete(ws);
+      }
+    }
+  }
+
+  private async broadcastExcept(roomId: string, data: unknown, except: WebSocket): Promise<void> {
+    void roomId;
+    const payload = JSON.stringify(data);
+    const senderId = (data as { userId?: string })?.userId;
+    for (const [ws, meta] of this.sessions) {
+      if (ws === except) continue;
+      // Respect blocks: viewers who blocked the sender see nothing, not even typing.
+      if (senderId) {
+        let blockedSet = this.blockedUsers.get(meta.userId);
+        if (!blockedSet) {
+          const stored = await this.storage.get<string[]>(`blocks:${meta.userId}`);
+          blockedSet = new Set(stored ?? []);
+          this.blockedUsers.set(meta.userId, blockedSet);
+        }
+        if (blockedSet.has(senderId)) continue;
+      }
+      try {
+        if (ws.readyState === 1) ws.send(payload);
+      } catch {
         this.sessions.delete(ws);
       }
     }

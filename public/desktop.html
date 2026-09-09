@@ -57,6 +57,11 @@
     .meta time{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:#6B6B74}
     .body{font-size:14.5px; line-height:1.6; white-space:pre-wrap; word-break:break-word}
     .presence{display:none; width:fit-content; margin:0 auto 6px; font-family:"JetBrains Mono",monospace; font-size:11px; color:#9A9AA3; border:1px solid rgba(255,255,255,.08); background:#101014; border-radius:99px; padding:5px 12px}
+    .typing{display:none; width:fit-content; margin:0 auto 6px; font-size:12px; color:#9A9AA3; border:1px solid rgba(255,255,255,.08); background:#101014; border-radius:99px; padding:5px 12px}
+    .typing b{color:#ECECED; font-weight:600}
+    .typing .dots::after{content:""; animation:tdots 1.2s infinite}
+    @keyframes tdots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+    @media (prefers-reduced-motion:reduce){.typing .dots::after{content:"..."; animation:none}}
     .composer{border:1px solid rgba(255,255,255,.13); background:#131318; border-radius:26px; padding:0}
     #msgInput{width:100%; background:transparent; border:0; outline:0; color:#ECECED; font:inherit; font-size:14.5px; padding:15px 18px; display:block}
     .composer-bar{display:flex; align-items:center; padding:0 10px 10px 18px}
@@ -86,14 +91,14 @@
     </aside>
     <main class="main">
       <header class="topbar"><div class="room-pill">Private · 2-person · E2E</div><div style="margin-left:auto"><button class="primary-btn" id="openQrBtn">Invite</button></div></header>
-      <div class="scroll" id="scroll"><div class="col"><div id="presence"></div><div id="msgs" role="log" aria-live="polite"></div></div></div>
+      <div class="scroll" id="scroll"><div class="col"><div id="presence"></div><div id="typing" class="typing" role="status" aria-live="polite"></div><div id="msgs" role="log" aria-live="polite"></div></div></div>
       <div style="padding:6px 0 10px; background:linear-gradient(180deg, transparent, #0A0A0B 30%)"><div class="col"><div class="composer"><textarea id="msgInput" rows="1" placeholder="Message" maxlength="2000"></textarea><div class="composer-bar"><span style="flex:1"></span><button class="send" id="send" aria-label="Send" disabled>↑</button></div></div></div></div>
     </main>
   </div>
 
   <div id="qrModal" class="hide"></div><div id="hero" class="hide"></div><div id="debug" class="hide"></div><div id="toasts" class="toast-stack"></div>
   <div class="hide"><span id="roomName"></span><span id="gen"></span><span id="heroLinkBtn"></span><span id="qrClose"></span><span id="menuBtn"></span><span id="newChatBtn"></span></div>
-  <script src="/config.js?v=2"></script>
-  <script type="module" src="/client/desktop.js?v=2"></script>
+  <script src="/config.js?v=3"></script>
+  <script type="module" src="/client/desktop.js?v=3"></script>
 </body>
 </html>

@@ -52,6 +52,11 @@
     #chatHead span{margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--mut); border:1px solid var(--line); border-radius:99px; padding:3px 9px}
     #mmsgs{height:280px; height:min(52dvh,420px); overflow:auto; overscroll-behavior:contain; padding:12px; display:flex; flex-direction:column; gap:2px}
     #mmsgs:empty::after{content:"No messages yet — say hello."; display:block; text-align:center; color:var(--dim); font-size:12.5px; padding:18px 0}
+    #mtyping{display:none; width:fit-content; margin:0 12px 6px; font-size:12px; color:var(--mut); border:1px solid var(--line); background:var(--raised); border-radius:99px; padding:4px 11px}
+    #mtyping b{color:var(--txt); font-weight:600}
+    #mtyping .dots::after{content:""; animation:tdots 1.2s infinite}
+    @keyframes tdots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+    @media (prefers-reduced-motion:reduce){#mtyping .dots::after{content:"..."; animation:none}}
     .mrow{display:flex; gap:10px; padding:8px 8px; border-radius:12px}
     .mrow.me{justify-content:flex-end}
     .mrow .ava{width:28px; height:28px; border-radius:50%; flex:0 0 auto; display:grid; place-items:center; font-size:11px; font-weight:600; background:#1C1D23; border:1px solid var(--line)}
@@ -92,6 +97,7 @@
     <section id="chatWrap" aria-label="Chat with host">
       <div id="chatHead"><b>Chat</b> <span id="chatState">not joined</span></div>
       <div id="mmsgs" role="log" aria-live="polite"></div>
+      <div id="mtyping" role="status" aria-live="polite"></div>
       <div class="composer"><input id="mInput" placeholder="Message — Enter to send" maxlength="2000" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send" aria-label="Message" /><button class="send" id="mSend" aria-label="Send" disabled>↑</button></div>
     </section>
   </div>
@@ -99,7 +105,7 @@
     <button id="deny" class="btn btn-quiet" style="flex:1; color:#FF8585">Deny</button>
     <button id="approve" class="btn btn-primary" disabled>Approve & chat</button>
   </div></div>
-  <script src="/config.js?v=2"></script>
-  <script type="module" src="/client/mobile.js?v=2"></script>
+  <script src="/config.js?v=3"></script>
+  <script type="module" src="/client/mobile.js?v=3"></script>
 </body>
 </html>

@@ -57,6 +57,27 @@ function renderMe(){
   if(roomNameEl) roomNameEl.textContent=privateRoomId||currentRoom;
 }
 function updateSend(){ if(sendBtn&&inputEl) sendBtn.disabled=!(chatWs&&chatWs.readyState===1&&inputEl.value.trim()); }
+// --- typing indicator (loading animation while peer types) ---
+let typingSent=false, typingIdle=null, typingThrottle=0, typingHideT=null;
+function sendTyping(state){
+  if(!chatWs||chatWs.readyState!==1||!currentRoom) return;
+  const now=Date.now();
+  if(state===typingSent) { if(state){ clearTimeout(typingIdle); typingIdle=setTimeout(()=>sendTyping(false),4000); } return; }
+  if(state && now-typingThrottle<3000 && typingSent) return;
+  typingSent=state; if(state) typingThrottle=now;
+  try{ chatWs.send(JSON.stringify({type:"typing", roomId:currentRoom, typing:state})); }catch{}
+  if(state){ clearTimeout(typingIdle); typingIdle=setTimeout(()=>sendTyping(false),4000); }
+  else clearTimeout(typingIdle);
+}
+function showTyping(name){
+  const el=$("#typing"); if(!el) return;
+  el.innerHTML=""; const b=document.createElement("b"); b.textContent=name;
+  const dots=document.createElement("span"); dots.className="dots"; dots.setAttribute("aria-hidden","true");
+  el.append(b, document.createTextNode(" is typing "), dots);
+  el.style.display="block";
+  clearTimeout(typingHideT); typingHideT=setTimeout(hideTyping,5000);
+}
+function hideTyping(){ const el=$("#typing"); if(el) el.style.display="none"; clearTimeout(typingHideT); }
 function openModal(){ try { sessionStorage.removeItem("qrchat.inchat"); } catch {} setGated(true); }
 function closeModal(){ if(gated) return; const qrView=document.getElementById("qrView"), chatView=document.getElementById("chatView"); if(qrView) {qrView.style.display="none"; qrView.classList.add("hide");} if(chatView){chatView.style.display="grid"; chatView.classList.remove("hide");} modal?.classList.remove("open"); }
 function updateHero(){ if(heroEl&&msgsEl) heroEl.style.display=msgsEl.querySelector(".row")?"none":""; }
@@ -252,12 +273,22 @@ function tryWs(authToken, protoTried=true){
   };
   try{ openWaiter(protoTried); }catch{ if(protoTried){ try{ openWaiter(false); }catch{} } }
 }
+let pollGen=0, pollDelay=2500;
 function startPolling(authToken){
-  if(pollTimer) clearInterval(pollTimer);
-  pollTimer=setInterval(async()=>{
+  // Poll is the fallback behind the waiter WS. Base 2.5s stays under the
+  // per-token rate cap; consecutive 429s back off exponentially (stale tab
+  // storms must never wedge the host on the QR screen).
+  if(pollTimer){ clearInterval(pollTimer); clearTimeout(pollTimer); }
+  pollTimer=null;
+  const gen=++pollGen;
+  pollDelay=2500;
+  const tick=async()=>{
+    if(gen!==pollGen) return;
     let res;
     try{ res=await fetch(api(`/api/auth/qr/status`),{headers:{"X-QR-Token":authToken}}); }
-    catch{ return; }
+    catch{ if(gen===pollGen) pollTimer=setTimeout(tick,pollDelay); return; }
+    if(res.status===429){ pollDelay=Math.min(8000,pollDelay*2); if(gen===pollGen) pollTimer=setTimeout(tick,pollDelay); return; }
+    pollDelay=2500;
     const data=await res.json().catch(()=>({}));
     if(data.status==="approved"){
       if(createdAsHost){
@@ -265,10 +296,13 @@ function startPolling(authToken){
         if(r){ privateRoomId=r; currentRoom=r; }
         setStatus("Joined — say hello"); toast(`Someone joined ${r} — 2-person, E2E`); setGated(false); modal?.classList.remove("open"); connectChat(r); cleanup();
       }else{ setStatus("Approved"); claim(authToken); }
+      return;
     }
-    if(data.status==="denied"){ setStatus("Denied"); cleanup(); }
-    if(data.status==="expired"){ setStatus("Expired"); cleanup(); }
-  },1500);
+    if(data.status==="denied"){ setStatus("Denied"); cleanup(); return; }
+    if(data.status==="expired"){ setStatus("Expired"); cleanup(); return; }
+    if(gen===pollGen) pollTimer=setTimeout(tick,pollDelay);
+  };
+  pollTimer=setTimeout(tick,pollDelay);
 }
 async function claim(authToken){
   cleanup();
@@ -288,7 +322,7 @@ async function claim(authToken){
     setGated(false); modal?.classList.remove("open"); connectChat(privateRoomId||currentRoom);
   }else setStatus("Claim failed");
 }
-function cleanup(){ if(pollTimer) clearInterval(pollTimer); pollTimer=null; if(countdownTimer) clearInterval(countdownTimer); countdownTimer=null; if(ws) try{ ws.close(); }catch{} ws=null; lastInviteUrl=""; const sb=$("#copyLinkBtn"); if(sb) sb.disabled=true; }
+function cleanup(){ pollGen++; if(pollTimer){ clearInterval(pollTimer); clearTimeout(pollTimer); } pollTimer=null; if(countdownTimer) clearInterval(countdownTimer); countdownTimer=null; if(ws) try{ ws.close(); }catch{} ws=null; hideTyping(); lastInviteUrl=""; const sb=$("#copyLinkBtn"); if(sb) sb.disabled=true; }
 async function connectChat(roomId="general"){
   currentRoom=roomId;
   if(roomNameEl) roomNameEl.textContent=roomId;
@@ -296,6 +330,7 @@ async function connectChat(roomId="general"){
   $$(".room").forEach(b=>b.classList.toggle("active",b.dataset.room===roomId));
   if(chatWs) try{ chatWs.close(); }catch{}
   if(msgsEl) msgsEl.innerHTML="";
+  typingSent=false; clearTimeout(typingIdle); hideTyping();
   updateHero();
   if(!jwt){ setGated(true); openModal(); gen(); return; }
   try { sessionStorage.setItem("qrchat.inchat", "1"); } catch {}
@@ -324,6 +359,7 @@ function openChatWs(roomId, useProto){
       const d=JSON.parse(e.data);
       if(d.type==="welcome"){ updateHero(); if(d.history?.length) log("history suppressed",d.history.length); }
       else if(d.type==="message") await appendMsg(d.message);
+      else if(d.type==="typing"){ const who=d.displayName||d.userId||"Peer"; if(d.typing) showTyping(who); else hideTyping(); }
       else if(d.type==="presence"&&presenceEl){ presenceEl.style.display="block"; presenceEl.textContent=`● ${d.userId} ${d.event}ed`; clearTimeout(presenceEl._t); presenceEl._t=setTimeout(()=>presenceEl.style.display="none",3500); }
       else if(d.type==="peer_closed"){ appendSystem("Peer refreshed — closing"); toast("Peer left — closing tab…"); setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; },800); try{ chatWs.close(); }catch{} }
       else if(d.type==="moderation"){ appendSystem("Blocked by moderation."); toast("Blocked"); }
@@ -357,6 +393,7 @@ async function send(){
   const body=inputEl.value.trim();
   if(!body) return;
   if(!chatWs||chatWs.readyState!==1){ toast("Link first"); openModal(); return; }
+  sendTyping(false);
   let outBody=body;
   if(currentRoom.startsWith("dm_")&&e2eKey) outBody=await e2eEncrypt(body,e2eKey);
   chatWs.send(JSON.stringify({type:"message", roomId:currentRoom, body:outBody}));
@@ -379,7 +416,8 @@ $("#copyLinkBtn")?.addEventListener("click",async()=>{
   }catch{ toast("Copy failed — photograph the QR instead"); }
 });
 $("#send")?.addEventListener("click",send);
-inputEl?.addEventListener("input",()=>{ autogrow(); updateSend(); });
+inputEl?.addEventListener("input",()=>{ autogrow(); updateSend(); sendTyping(!!inputEl.value.trim()); });
+inputEl?.addEventListener("blur",()=>sendTyping(false));
 inputEl?.addEventListener("keydown",(e)=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(); } });
 $("#newChatBtn")?.addEventListener("click",()=>{ if(msgsEl) msgsEl.innerHTML=""; updateHero(); inputEl?.focus(); });
 $("#menuBtn")?.addEventListener("click",()=>$("#sidebar")?.classList.add("open"));

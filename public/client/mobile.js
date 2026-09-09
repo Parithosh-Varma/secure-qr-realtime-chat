@@ -128,6 +128,7 @@ async function joinChatM() {
   if (!mobileJwt) { mSystem("No session yet — reload to retry"); return; }
   try { sessionStorage.setItem("qrchat.m.inchat", "1"); } catch {}
   if (mWs) try { mWs.close(); } catch {}
+  mTypingSent=false; clearTimeout(mTypingIdle); mHideTyping();
   // Prefer Sec-WebSocket-Protocol for the JWT (no URL leakage). If the
   // handshake fails before opening, retry once with ?token=.
   openChatWsM(room, true);
@@ -157,6 +158,7 @@ async function joinChatM() {
         const mine = d.message.userId === (JSON.parse(atob(mobileJwt.split(".")[1]))?.userId);
         mAppend(`${d.message.displayName || d.message.userId}: ${body}`, mine);
       } else if (d.type === "presence") mSystem(`${d.userId} ${d.event}ed`);
+      else if (d.type === "typing") { const who=d.displayName||d.userId||"Peer"; if(d.typing) mShowTyping(who); else mHideTyping(); }
       else if (d.type === "peer_closed") { mSystem("Peer refreshed — closing tab…"); setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; }, 800); try{ mWs.close(); }catch{} }
     } catch {}
   };
@@ -170,13 +172,37 @@ async function joinChatM() {
   const send = async () => {
     const v = inp?.value.trim();
     if (!v || !mWs || mWs.readyState !== 1) return;
+    mSendTyping(false);
     const out = await e2eEncryptM(v, e2eKeyM);
     mWs.send(JSON.stringify({ type: "message", roomId: room, body: out }));
     if (inp) inp.value = "";
   };
   btn?.addEventListener("click", send);
   inp?.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+  inp?.addEventListener("input", () => { mSendTyping(!!inp.value.trim()); });
+  inp?.addEventListener("blur", () => mSendTyping(false));
 }
+// --- typing indicator (loading animation while peer types) ---
+let mTypingSent=false, mTypingIdle=null, mTypingThrottle=0, mTypingHideT=null;
+function mSendTyping(state){
+  if(!mWs||mWs.readyState!==1||!privateRoomM) return;
+  const now=Date.now();
+  if(state===mTypingSent){ if(state){ clearTimeout(mTypingIdle); mTypingIdle=setTimeout(()=>mSendTyping(false),4000); } return; }
+  if(state && now-mTypingThrottle<3000 && mTypingSent) return;
+  mTypingSent=state; if(state) mTypingThrottle=now;
+  try{ mWs.send(JSON.stringify({type:"typing", roomId:privateRoomM, typing:state})); }catch{}
+  if(state){ clearTimeout(mTypingIdle); mTypingIdle=setTimeout(()=>mSendTyping(false),4000); }
+  else clearTimeout(mTypingIdle);
+}
+function mShowTyping(name){
+  const el=$("#mtyping"); if(!el) return;
+  el.innerHTML=""; const b=document.createElement("b"); b.textContent=name;
+  const dots=document.createElement("span"); dots.className="dots"; dots.setAttribute("aria-hidden","true");
+  el.append(b, document.createTextNode(" is typing "), dots);
+  el.style.display="block";
+  clearTimeout(mTypingHideT); mTypingHideT=setTimeout(mHideTyping,5000);
+}
+function mHideTyping(){ const el=$("#mtyping"); if(el) el.style.display="none"; clearTimeout(mTypingHideT); }
 
 // No nickname UI — a silent ephemeral guest session is minted automatically
 // on boot (direct visits) or on scan. Identity is random anon + server
