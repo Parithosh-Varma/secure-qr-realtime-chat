@@ -124,10 +124,11 @@ async function joinChatM() {
   const wrap = $("#chatWrap"), st = $("#chatState"), inp = $("#mInput"), btn = $("#mSend");
   const room = privateRoomM || "general";
   if (wrap) wrap.classList.add("open");
-  if (st) st.textContent = `connected · ${room} (2-person, E2E)`;
+  if (st) st.textContent = `connecting…`;
   if (!mobileJwt) { mSystem("No session yet — reload to retry"); return; }
   try { sessionStorage.setItem("qrchat.m.inchat", "1"); } catch {}
   if (mWs) try { mWs.close(); } catch {}
+  if (btn) btn.disabled = true;
   mTypingSent=false; clearTimeout(mTypingIdle); mHideTyping();
   // Prefer Sec-WebSocket-Protocol for the JWT (no URL leakage). If the
   // handshake fails before opening, retry once with ?token=.
@@ -144,7 +145,7 @@ async function joinChatM() {
       try{ w.close(); }catch{}
       try{ openChatWsM(room, false); }catch{ mSystem("Connection failed — retry"); }
     };
-    w.onopen = () => { opened=true; mSystem(`You joined ${room} as ${mobileDisplay || "anon"} — E2E on`); if (btn) btn.disabled = false; if (inp) inp.focus(); };
+    w.onopen = () => { opened=true; if (st) st.textContent = `connected · ${room} (2-person, E2E)`; mSystem(`You joined ${room} as ${mobileDisplay || "anon"} — E2E on`); if (btn) btn.disabled = false; if (inp) inp.focus(); };
     w.onerror = () => { retryQuery(); };
     w.onmessage = async (e) => {
     try {
@@ -213,7 +214,11 @@ if (!getInviteFromUrl()) {
   });
 }
 async function doPreview(authToken) {
-  if (previewOut) previewOut.textContent = "Checking…";
+  if (previewOut) {
+    previewOut.innerHTML = "";
+    const s = document.createElement("span"); s.className = "spin"; s.setAttribute("aria-hidden", "true");
+    previewOut.append(s, document.createTextNode("Checking…"));
+  }
   // Token via header (no URL leakage). Server returns fingerprint/location
   // for the explicit consent screen.
   const res = await fetch(api2(`/api/auth/qr/preview`),{headers:{"X-QR-Token":authToken}});
@@ -271,13 +276,21 @@ $("#approve")?.addEventListener("click", async () => {
   if (!token) return alert("Paste token");
   if (!$("#ack")?.checked) return alert("Please confirm you checked the login details first");
   if (!privateRoomM) return alert("Preview the invite first so we know the correct room");
-  const res = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token, action: "approve", confirmedFingerprint: true }) });
+  const approveBtn = $("#approve"), denyBtn = $("#deny");
+  if (approveBtn) { approveBtn.disabled = true; approveBtn.textContent = "Approving…"; }
+  if (denyBtn) denyBtn.disabled = true;
+  let res;
+  try{ res = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token, action: "approve", confirmedFingerprint: true }) }); }
+  catch{ if (approveBtn) { approveBtn.disabled = false; approveBtn.textContent = "Approve & chat"; } if (denyBtn) denyBtn.disabled = false; return alert("Network error — retry"); }
+  if (approveBtn) approveBtn.textContent = "Approve & chat";
   if (res.ok) {
     showConfirm(false);
     if (previewOut) previewOut.textContent = "Approved — opening E2E chat…";
     // Directly able to chat with host now (no extra step)
     joinChatM();
   } else {
+    if (approveBtn) approveBtn.disabled = false;
+    if (denyBtn) denyBtn.disabled = false;
     const d = await res.json().catch(()=>({}));
     alert("Approve failed: " + (d.error || res.status));
   }
@@ -285,9 +298,15 @@ $("#approve")?.addEventListener("click", async () => {
 $("#deny")?.addEventListener("click", async () => {
   const token = ($("#token")?.value || "").trim();
   if (!mobileJwt) return alert("Session not ready — reload and retry");
-  const res = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token, action: "deny", confirmedFingerprint: true }) });
+  const denyBtn = $("#deny"), approveBtn = $("#approve");
+  if (denyBtn) { denyBtn.disabled = true; denyBtn.textContent = "Denying…"; }
+  if (approveBtn) approveBtn.disabled = true;
+  let res;
+  try{ res = await fetch(api2("/api/auth/mobile/approve"), { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${mobileJwt}` }, body: JSON.stringify({ token, action: "deny", confirmedFingerprint: true }) }); }
+  catch{ if (denyBtn) { denyBtn.disabled = false; denyBtn.textContent = "Deny"; } if (approveBtn) approveBtn.disabled = !$("#ack")?.checked; return alert("Network error — retry"); }
+  if (denyBtn) denyBtn.textContent = "Deny";
   if (res.ok) { showConfirm(false); if (previewOut) previewOut.textContent = "Denied."; }
-  else alert("Deny failed");
+  else { if (denyBtn) denyBtn.disabled = false; if (approveBtn) approveBtn.disabled = !$("#ack")?.checked; alert("Deny failed"); }
 });
 $("#paste")?.addEventListener("click", async () => {
   try { $("#token").value = (await navigator.clipboard.readText()).trim(); } catch { alert("Paste manually"); }

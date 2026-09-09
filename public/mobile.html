@@ -69,6 +69,9 @@
     .composer input:focus{border-color:rgba(122,162,255,.5)}
     .send{border:0; width:36px; height:36px; border-radius:50%; background:#fff; color:#000; display:grid; place-items:center; cursor:pointer; flex:0 0 auto}
     .send:disabled{opacity:.4}
+    .spin{display:inline-block; width:12px; height:12px; border-radius:50%; border:2px solid rgba(255,255,255,.2); border-top-color:#fff; animation:spin .8s linear infinite; vertical-align:-2px; margin-right:7px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @media (prefers-reduced-motion:reduce){.spin{animation:none; border-top-color:rgba(255,255,255,.2)}}
   </style>
 </head>
 <body>
@@ -79,7 +82,7 @@
 
     <section class="card">
       <h2>Session</h2>
-      <p class="note" id="loginOut">Creating ephemeral session…</p>
+      <p class="note" id="loginOut"><span class="spin" aria-hidden="true"></span>Creating ephemeral session…</p>
     </section>
 
     <section class="card" id="inviteCard">
@@ -105,7 +108,7 @@
     <button id="deny" class="btn btn-quiet" style="flex:1; color:#FF8585">Deny</button>
     <button id="approve" class="btn btn-primary" disabled>Approve & chat</button>
   </div></div>
-  <script src="/config.js?v=3"></script>
-  <script type="module" src="/client/mobile.js?v=3"></script>
+  <script src="/config.js?v=4"></script>
+  <script type="module" src="/client/mobile.js?v=4"></script>
 </body>
 </html>

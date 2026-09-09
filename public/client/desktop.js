@@ -40,6 +40,24 @@ function setGated(on){
   if(chatView){ chatView.style.display=on?"none":"grid"; chatView.classList.toggle("hide",on); }
 }
 function setStatus(t){ if(statusEl) statusEl.textContent=t; }
+// Loading animations: spinner + label inside the QR box and for the
+// connecting state, so no stall is ever a dead screen.
+function setQrLoading(label){
+  if(!qrEl) return;
+  qrEl.innerHTML="";
+  const d=document.createElement("div"); d.className="empty";
+  const s=document.createElement("span"); s.className="spin"; s.setAttribute("aria-hidden","true");
+  d.append(s, document.createTextNode(label||"Creating…"));
+  qrEl.appendChild(d);
+}
+function setConn(on,label){
+  const el=$("#conn"); if(!el) return;
+  if(!on){ el.style.display="none"; return; }
+  el.innerHTML="";
+  const s=document.createElement("span"); s.className="spin"; s.setAttribute("aria-hidden","true");
+  el.append(s, document.createTextNode(label||"Connecting…"));
+  el.style.display="block";
+}
 function setTimer(){
   const s=expiresAt?Math.max(0,Math.round((expiresAt-Date.now())/1000)):-1;
   if(s<0){ if(timerText) timerText.textContent="Scan QR from other device"; if(ringNum) ringNum.textContent="–"; if(ringFg) ringFg.style.strokeDashoffset="0"; return; }
@@ -170,7 +188,7 @@ async function ensureEphemeralIdentity(){
 }
 async function gen(){
   setStatus("Issuing…");
-  if(qrEl) qrEl.innerHTML='<div class="empty">Creating…</div>';
+  setQrLoading("Creating…");
   if(pollTimer) clearInterval(pollTimer);
   if(countdownTimer) clearInterval(countdownTimer);
   if(ws) try{ ws.close(); }catch{}
@@ -331,6 +349,7 @@ async function connectChat(roomId="general"){
   if(chatWs) try{ chatWs.close(); }catch{}
   if(msgsEl) msgsEl.innerHTML="";
   typingSent=false; clearTimeout(typingIdle); hideTyping();
+  setConn(true);
   updateHero();
   if(!jwt){ setGated(true); openModal(); gen(); return; }
   try { sessionStorage.setItem("qrchat.inchat", "1"); } catch {}
@@ -355,6 +374,7 @@ function openChatWs(roomId, useProto){
   w.onerror=()=>{ retryQuery(); };
   w.onmessage=async(e)=>{
     if(chatWs!==w) return;
+    setConn(false);
     try{
       const d=JSON.parse(e.data);
       if(d.type==="welcome"){ updateHero(); if(d.history?.length) log("history suppressed",d.history.length); }
@@ -369,6 +389,7 @@ function openChatWs(roomId, useProto){
   w.onclose=(e)=>{
     if(chatWs!==w) return;
     if(!opened && useProto){ retryQuery(); return; }
+    setConn(false);
     if(e&&e.code===4000){ appendSystem("Peer refreshed — closing tab…"); setTimeout(()=>{ try{ window.close(); }catch{} location.href="about:blank"; },500); return; } appendSystem("Disconnected — reload erases (ephemeral)"); renderMe();
   };
 }
@@ -394,10 +415,15 @@ async function send(){
   if(!body) return;
   if(!chatWs||chatWs.readyState!==1){ toast("Link first"); openModal(); return; }
   sendTyping(false);
-  let outBody=body;
-  if(currentRoom.startsWith("dm_")&&e2eKey) outBody=await e2eEncrypt(body,e2eKey);
-  chatWs.send(JSON.stringify({type:"message", roomId:currentRoom, body:outBody}));
-  inputEl.value=""; autogrow(); updateSend();
+  // Busy state while E2E-encrypting + handing to the socket (prevents double-send).
+  if(sendBtn) sendBtn.disabled=true;
+  try{
+    let outBody=body;
+    if(currentRoom.startsWith("dm_")&&e2eKey) outBody=await e2eEncrypt(body,e2eKey);
+    chatWs.send(JSON.stringify({type:"message", roomId:currentRoom, body:outBody}));
+    inputEl.value=""; autogrow();
+  }catch{ toast("Send failed — retry"); }
+  finally{ updateSend(); if(inputEl) inputEl.focus(); }
 }
 function autogrow(){ inputEl.style.height="auto"; inputEl.style.height=Math.min(160,inputEl.scrollHeight)+"px"; }
 $("#gen")?.addEventListener("click",gen);
