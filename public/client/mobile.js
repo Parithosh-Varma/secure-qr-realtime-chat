@@ -93,7 +93,10 @@ async function deriveE2EKeyMV2(e2eSecret, epoch) {
   }
 }
 async function e2eKeyForM(secret, epoch){
-  const id=epoch==null?"v1":"v2:"+epoch;
+  // Cache id includes a secret prefix: one tab can cycle secrets across QR
+  // regenerations, and same-epoch keys for different secrets must never mix.
+  const stag=String(secret||"").slice(0,12);
+  const id=(epoch==null?"v1":"v2:"+epoch)+":"+stag;
   let k=e2eKeyCacheM.get(id);
   if(k) return k;
   k=epoch==null?await deriveE2EKeyM(secret):await deriveE2EKeyMV2(secret,epoch);
