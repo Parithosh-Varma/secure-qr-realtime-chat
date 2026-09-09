@@ -24,7 +24,7 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 const statusEl = $("#status"), timerText = $("#timerText"), ringFg = $("#ringFg"), ringNum = $("#ringNum"), qrEl = $("#qr"), linkEl = $("#link"), linkWrap = $("#linkWrap"), debugEl = $("#debug"), msgsEl = $("#msgs"), meEl = $("#me"), meSub = $("#meSub"), avatarEl = $("#avatar"), presenceEl = $("#presence"), inputEl = $("#msgInput"), sendBtn = $("#send"), heroEl = $("#hero"), scrollEl = $("#scroll"), modal = $("#qrModal"), toastsEl = $("#toasts"), roomNameEl = $("#roomName");
 const RING_C = 97.4;
 let pollTimer=null, countdownTimer=null, ws=null, chatWs=null;
-let currentAuthToken=null, currentE2ESecret=null, expiresAt=0, createdAsHost=false, privateRoomId=null;
+let currentAuthToken=null, currentE2ESecret=null, expiresAt=0, createdAsHost=false, privateRoomId=null, lastInviteUrl="";
 let gated=true;
 let jwt="", identity=null;
 let currentRoom="general";
@@ -165,7 +165,7 @@ async function gen(){
   try{
     const headers={"Content-Type":"application/json"};
     if(jwt) headers["Authorization"]=`Bearer ${jwt}`;
-    res=await fetch(api("/api/auth/qr/create"),{method:"POST", headers, body:JSON.stringify({tokenHash})});
+    res=await fetch(api("/api/auth/qr/create"),{method:"POST", headers, body:JSON.stringify({tokenHash, autoJoin:true})});
   }catch{
     setStatus("Offline");
     if(qrEl) qrEl.innerHTML='<div class="empty">Network error — retry</div>';
@@ -199,6 +199,8 @@ async function gen(){
       ? `#a=${encodeURIComponent(currentAuthToken)}&e=${encodeURIComponent(currentE2ESecret)}`
       : `#token=${encodeURIComponent(currentAuthToken)}`;
     const qrText=`${location.origin}/mobile${frag}`;
+    lastInviteUrl=qrText;
+    const shareBtn=$("#copyLinkBtn"); if(shareBtn) shareBtn.disabled=false;
     setStatus(createdAsHost?`Invite · ${privateRoomId} — scan to chat`:"Scan with mobile");
     setTimer();
     countdownTimer=setInterval(setTimer,400);
@@ -280,7 +282,7 @@ async function claim(authToken){
     setGated(false); modal?.classList.remove("open"); connectChat(privateRoomId||currentRoom);
   }else setStatus("Claim failed");
 }
-function cleanup(){ if(pollTimer) clearInterval(pollTimer); pollTimer=null; if(countdownTimer) clearInterval(countdownTimer); countdownTimer=null; if(ws) try{ ws.close(); }catch{} ws=null; }
+function cleanup(){ if(pollTimer) clearInterval(pollTimer); pollTimer=null; if(countdownTimer) clearInterval(countdownTimer); countdownTimer=null; if(ws) try{ ws.close(); }catch{} ws=null; lastInviteUrl=""; const sb=$("#copyLinkBtn"); if(sb) sb.disabled=true; }
 async function connectChat(roomId="general"){
   currentRoom=roomId;
   if(roomNameEl) roomNameEl.textContent=roomId;
@@ -344,7 +346,14 @@ $("#heroLinkBtn")?.addEventListener("click",gen);
 $("#qrClose")?.addEventListener("click",closeModal);
 modal?.addEventListener("click",(e)=>{ if(e.target===modal) closeModal(); });
 document.addEventListener("keydown",(e)=>{ if(e.key==="Escape"){ closeModal(); $("#sidebar")?.classList.remove("open"); } });
-$("#copyLinkBtn")?.addEventListener("click",async()=>{ try{ await navigator.clipboard.writeText(linkEl.textContent); toast("Copied"); }catch{ toast("Copy failed"); } });
+$("#copyLinkBtn")?.addEventListener("click",async()=>{
+  if(!lastInviteUrl) return toast("No invite yet — wait for the QR");
+  try{
+    if(navigator.clipboard?.writeText) await navigator.clipboard.writeText(lastInviteUrl);
+    else{ const ta=document.createElement("textarea"); ta.value=lastInviteUrl; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); }
+    toast("Invite link copied — open it on the other desktop");
+  }catch{ toast("Copy failed — photograph the QR instead"); }
+});
 $("#send")?.addEventListener("click",send);
 inputEl?.addEventListener("input",()=>{ autogrow(); updateSend(); });
 inputEl?.addEventListener("keydown",(e)=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(); } });

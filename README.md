@@ -39,10 +39,11 @@
 - **Hashed at rest:** Worker hashes with SHA-256 before `idFromName()` and before persisting. DO stores `tokenHash`, never the raw token. Logs only `hashForLog(hash).slice(0,8)`.
 - **Short-lived:** default 90s (configurable `QR_TTL_SECONDS=60–120`). `storage.setAlarm(expiresAt+1s)` in DO; also lazy expiry on read.
 - **Burned on claim:** `AuthSession` runs single-threaded; `POST /claim` checks `status===approved`, then flips to `claimed` + `claimedAt` and `setAlarm(now+5s)` *before* returning identity. Second `claim` gets `410 Already claimed` — no replay, no race. Alarm then deletes to prevent disk bloat but keeps tombstone until grace ends.
-- **No auto-approve / no blind trust:**
-  - Mobile must be **already authenticated** (valid `Bearer JWT` verified via `verifyJwt()` with `HMAC-SHA256` + constant-time compare).
-  - Worker enforces explicit `action: "approve"|"deny"` body; DO rejects any other.
-  - Mobile client **must** show confirmation: `fingerprint { ip, UA, acceptLanguage, city, country, timestamp }` captured at QR creation time in the DO. User taps checkbox + Approve — deny instantly flips to `denied` and notifies waiters.
+- **Scan-to-join (no nickname, no tap):**
+  - The desktop showing the QR opts the session in (`autoJoin:true` at create). Scanning = acceptance: the mobile client auto-mints a silent ephemeral guest, auto-approves (`auto:true`), and lands straight in the 1:1 E2E chat.
+  - The DO only honors `auto:true` for opted-in sessions; anything else requires explicit `confirmedFingerprint:true` (manual preview + checkbox flow, still available as fallback).
+  - Who you joined (host + device/city/country from the server fingerprint) is posted as the first system message in chat, so a swapped QR stays visible.
+  - Mobile must still hold a valid `Bearer JWT` (verified via `verifyJwt()` with `HMAC-SHA256` + constant-time compare); Worker enforces explicit `action: "approve"|"deny"`; deny instantly flips to `denied` and notifies waiters.
 
 ### Binding to device/location & anti-flooding
 

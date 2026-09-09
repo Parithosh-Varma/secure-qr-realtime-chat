@@ -24,6 +24,9 @@ type StoredState = {
   host?: UserIdentity; // who created the QR (for invite-to-chat)
   approver?: UserIdentity & { approvedAt: number };
   claimedAt?: number;
+  // Presenter opt-in: desktop showing the QR allows the scanner to auto-join
+  // without a blocking consent tap (scan = acceptance). Defaults false.
+  autoJoin: boolean;
 };
 
 export class AuthSession implements DurableObject {
@@ -70,7 +73,7 @@ export class AuthSession implements DurableObject {
     // never sent to the server at all) stays client-side, so the server can
     // never derive E2E message keys. Legacy callers with no tokenHash get a
     // server-generated session (deprecated).
-    const body = (await req.json().catch(() => null)) as { tokenHash?: string; fingerprint?: StoredState["fingerprint"]; ttlMs?: number; host?: UserIdentity; roomId?: string } | null;
+    const body = (await req.json().catch(() => null)) as { tokenHash?: string; fingerprint?: StoredState["fingerprint"]; ttlMs?: number; host?: UserIdentity; roomId?: string; autoJoin?: boolean } | null;
     if (!body?.tokenHash || !body.fingerprint || typeof body.ttlMs !== "number") {
       return Response.json({ error: "Invalid body" }, { status: 400 });
     }
@@ -103,6 +106,7 @@ export class AuthSession implements DurableObject {
       tokenHash,
       roomId,
       host: host?.userId ? { userId: host.userId, displayName: host.displayName, email: host.email } : undefined,
+      autoJoin: body.autoJoin === true,
     };
     await this.storage.put("state", state);
     await this.storage.setAlarm(state.expiresAt + 1000);
@@ -154,7 +158,7 @@ export class AuthSession implements DurableObject {
 
   // ---- Mobile approval (requires authenticated identity forwarded by Worker) ----
   private async handleApprove(req: Request): Promise<Response> {
-    const body = (await req.json().catch(() => null)) as { tokenHash?: string; action?: string; approver?: UserIdentity } | null;
+    const body = (await req.json().catch(() => null)) as { tokenHash?: string; action?: string; approver?: UserIdentity; auto?: boolean } | null;
     if (!body?.tokenHash || !body.action || !body.approver?.userId) {
       return Response.json({ error: "Invalid body" }, { status: 400 });
     }
@@ -174,6 +178,13 @@ export class AuthSession implements DurableObject {
       return Response.json({ error: `Already ${state.status}` }, { status: 409 });
     }
 
+    // Auto-join (scanner's client approving right after scan) is only honored
+    // when the presenter opted the session in at creation. Otherwise the
+    // Worker requires an explicit fingerprint confirmation (manual flow).
+    if (action === "approve" && body.auto === true && state.autoJoin !== true) {
+      return Response.json({ error: "Auto-join not enabled for this invite — confirm fingerprint" }, { status: 403 });
+    }
+
     if (action === "deny") {
       state.status = "denied";
       await this.storage.put("state", state);
@@ -187,7 +198,7 @@ export class AuthSession implements DurableObject {
     state.approver = { ...approver, approvedAt: Date.now() };
     await this.storage.put("state", state);
 
-    log("info", "qr.approved", { tokenHash: hashForLog(tokenHash), approverId: approver.userId });
+    log("info", "qr.approved", { tokenHash: hashForLog(tokenHash), approverId: approver.userId, auto: body.auto === true });
 
     // Notify any desktop WS waiters that session is approved (they still must call /claim to burn)
     this.notifyWaiters({ status: "approved", approvedAt: state.approver.approvedAt });

@@ -263,24 +263,63 @@ async function ensureMobileSession() {
   if (data.token) { mobileJwt = data.token; mobileDisplay = nick; if (loginOut) loginOut.textContent = `Joined as ${nick} — ephemeral`; return true; }
   return false;
 }
-// SECURITY: scanning a QR MUST show the fingerprint consent screen first.
-// The old silent auto-approve (join + approve without user tap) was removed:
-// we stash the invite, clear it from the URL, ensure a guest session, fetch
-// preview (device/location/expiry), and wait for explicit Approve.
+// Scan = acceptance: the presenter showing the QR opted the session into
+// auto-join, so scanning drops you straight into the chat — no nickname, no
+// approve tap. A silent guest identity is minted automatically. Who you joined
+// (host + device/location) is shown as the first system message instead of a
+// blocking gate, so a swapped QR is still visible. Any failure falls back to
+// the manual preview + Approve UI below.
+async function autoJoinFromScan(authToken){
+  try{
+    if(!await ensureMobileSession()) return false;
+    const prev=await fetch(api2("/api/auth/qr/preview"),{headers:{"X-QR-Token":authToken}});
+    const data=await prev.json().catch(()=>({}));
+    if(!prev.ok || (data.status!=="pending" && data.status!=="approved")) return false;
+    // SERVER-authoritative roomId — never derive locally.
+    privateRoomM=data.roomId||null;
+    if(!privateRoomM) return false;
+    if(data.status!=="approved"){
+      const appr=await fetch(api2("/api/auth/mobile/approve"),{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${mobileJwt}`},body:JSON.stringify({token:authToken,action:"approve",auto:true})});
+      if(!appr.ok) return false;
+    }
+    showConfirm(false);
+    const fp=data.fingerprint||{};
+    const host=data.host?`${data.host.displayName||data.host.userId}`:"Host";
+    const loc=[fp.city,fp.country].filter(Boolean).join(", ");
+    if(previewOut) previewOut.textContent=`Connected — E2E chat…`;
+    joinChatM();
+    mSystem(`Joined ${host} — 1:1 E2E on${loc?` · ${loc}`:""}`);
+    return true;
+  }catch{ return false; }
+}
 try {
   const inv = getInviteFromUrl();
   if (inv) {
     $("#token").value = inv.authToken;
     if (inv.e2eSecret) e2eKeyM = await deriveE2EKeyM(inv.e2eSecret);
-    else { e2eKeyM = null; mSystem("Legacy invite — no E2E secret. Ask for a new QR for full E2E."); }
+    else { e2eKeyM = null; }
     currentAuthTokenM = inv.authToken;
     // Hide invite from address bar immediately (privacy) — keep only in memory
     try{ history.replaceState(null, "", location.pathname + location.search.replace(/[\?&]token=[^&]+/g,'').replace(/^&/,'?')); }catch{}
     try{ if(location.hash) history.replaceState(null, "", location.pathname + location.search); }catch{}
     if(location.hash) try{ location.hash=""; }catch{}
-    await ensureMobileSession();
-    await doPreview(inv.authToken);
-    mSystem("Check the login details above, tick confirm, then Approve — never auto-joins.");
+    // Straight into chat shell — no nickname, no tap.
+    const ic = document.getElementById("inviteCard");
+    if (ic) ic.style.display = "none";
+    const nickCard = document.querySelector(".card");
+    if (nickCard) nickCard.style.display = "none";
+    const chatWrap = document.getElementById("chatWrap");
+    if (chatWrap) chatWrap.classList.add("open");
+    mSystem("Connecting…");
+    const joined = await autoJoinFromScan(inv.authToken);
+    if (!joined) {
+      // Fall back to manual consent UI.
+      if (ic) ic.style.display = "";
+      if (nickCard) nickCard.style.display = "";
+      if(inv.e2eSecret===null) mSystem("Legacy invite — no E2E secret. Ask for a new QR for full E2E.");
+      await doPreview(inv.authToken);
+      mSystem("Auto-join failed — check the login details, tick confirm, then Approve.");
+    }
   }
 } catch {}
 // Refresh on any device closes the other tab (ephemeral 2-person)
