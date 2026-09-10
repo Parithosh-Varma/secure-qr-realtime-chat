@@ -77,6 +77,14 @@
     .spin{display:inline-block; width:12px; height:12px; border-radius:50%; border:2px solid rgba(255,255,255,.2); border-top-color:#fff; animation:spin .8s linear infinite; vertical-align:-2px; margin-right:7px}
     @keyframes spin{to{transform:rotate(360deg)}}
     @media (prefers-reduced-motion:reduce){.spin{animation:none; border-top-color:rgba(255,255,255,.2)}}
+    :root{--void:#f4f7f5;--card:#fff;--raised:#edf4f1;--line:#dbe5e1;--line-2:#b9d9d1;--txt:#101820;--mut:#64727b;--dim:#8a989d;--aura:#0b7a75;--danger:#b3424d}
+    body{background:radial-gradient(circle at 90% 0,#e5f4ed 0,transparent 30%),var(--void);color:var(--txt);font-family:Inter,ui-sans-serif,system-ui,sans-serif}
+    .top{background:rgba(244,247,245,.86);border-color:var(--line)}.top-inner{padding:15px 18px}.brand-logo{border-radius:9px}.top-inner b{color:#173b3a}.back{color:var(--txt);border-color:var(--line-2)}
+    .wrap{padding-top:34px}h1{font-size:36px;letter-spacing:-.055em;color:#173b3a}h1 em{color:var(--aura)}.sub{color:var(--mut);max-width:390px}
+    .card{background:rgba(255,255,255,.86);border-color:var(--line);border-radius:20px;box-shadow:0 14px 38px rgba(16,24,32,.07);padding:18px}.card h2{color:#173b3a}.note{color:var(--mut)}input[type=text],.composer input{background:#f7faf8;border-color:var(--line);color:var(--txt)}input:focus,.composer input:focus{border-color:var(--aura)}
+    .btn-primary{background:var(--aura);color:#fff}.btn-quiet{color:var(--txt);border-color:var(--line-2)}#confirm{border-color:var(--line);background:var(--raised)}.check input{accent-color:var(--aura)}
+    .dock{background:rgba(244,247,245,.9);border-color:var(--line)}#chatWrap{background:var(--card);border-color:var(--line);box-shadow:0 14px 38px rgba(16,24,32,.07)}#chatHead{border-color:var(--line);color:#173b3a}#chatHead span{border-color:var(--line);color:var(--mut)}#mmsgs{background:#fbfdfc}.mrow .ava{background:var(--accent-soft);color:var(--aura);border:0}.mbub{background:var(--raised);border-color:var(--line);color:var(--txt)}.mrow.me .mbub{background:var(--aura);color:#fff;border-color:var(--aura)}.composer{border-color:var(--line)}.send{background:var(--aura);color:#fff}
+    @media(min-width:600px){.wrap{padding-top:52px}.card{padding:22px}}
   </style>
 </head>
 <body>
