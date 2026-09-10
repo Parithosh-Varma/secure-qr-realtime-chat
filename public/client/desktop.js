@@ -24,6 +24,7 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 const statusEl = $("#status"), timerText = $("#timerText"), ringFg = $("#ringFg"), ringNum = $("#ringNum"), qrEl = $("#qr"), linkEl = $("#link"), linkWrap = $("#linkWrap"), debugEl = $("#debug"), msgsEl = $("#msgs"), meEl = $("#me"), meSub = $("#meSub"), avatarEl = $("#avatar"), presenceEl = $("#presence"), inputEl = $("#msgInput"), sendBtn = $("#send"), heroEl = $("#hero"), scrollEl = $("#scroll"), modal = $("#qrModal"), toastsEl = $("#toasts"), roomNameEl = $("#roomName");
 const RING_C = 97.4;
 let pollTimer=null, countdownTimer=null, ws=null, chatWs=null;
+let joinedOnce=false; // true once this tab has entered a chat — enables "Back to chat" on the Invite screen
 let currentAuthToken=null, currentE2ESecret=null, expiresAt=0, createdAsHost=false, privateRoomId=null, lastInviteUrl="";
 let gated=true;
 let jwt="", identity=null;
@@ -37,6 +38,14 @@ function setGated(on){
   const qrView=document.getElementById("qrView"), chatView=document.getElementById("chatView");
   if(qrView){ qrView.style.display=on?"grid":"none"; qrView.classList.toggle("hide",!on); }
   if(chatView){ chatView.style.display=on?"none":"grid"; chatView.classList.toggle("hide",on); }
+  updateQrBack();
+}
+function updateQrBack(){
+  // Show "Back to chat" on the Invite/QR screen only when there is a live
+  // chat to return to (Invite tapped from inside a chat). Pre-auth QR stage
+  // never shows it — there is nothing to go back to.
+  const bb=$("#qrBack");
+  if(bb) bb.style.display=(joinedOnce&&gated)?"":"none";
 }
 function setStatus(t){ if(statusEl) statusEl.textContent=t; }
 // Loading animations: spinner + label inside the QR box and for the
@@ -401,6 +410,7 @@ async function claim(authToken){
 function cleanup(){ pollGen++; qrSettled=true; if(pollTimer){ clearInterval(pollTimer); clearTimeout(pollTimer); } pollTimer=null; if(countdownTimer) clearInterval(countdownTimer); countdownTimer=null; if(ws) try{ ws.close(); }catch{} ws=null; hideTyping(); lastInviteUrl=""; const sb=$("#copyLinkBtn"); if(sb) sb.disabled=true; }
 async function connectChat(roomId="general"){
   currentRoom=roomId;
+  joinedOnce=true;
   if(roomNameEl) roomNameEl.textContent=roomId;
   if(inputEl) inputEl.placeholder=`Message · E2E if dm_*`;
   $$(".room").forEach(b=>b.classList.toggle("active",b.dataset.room===roomId));
@@ -514,8 +524,14 @@ function settlePendingEl(cid){
 }
 function autogrow(){ inputEl.style.height="auto"; inputEl.style.height=Math.min(160,inputEl.scrollHeight)+"px"; }
 $("#gen")?.addEventListener("click",gen);
-$("#openQrBtn")?.addEventListener("click",()=>{ openModal(); if(!currentAuthToken||Date.now()>expiresAt) gen(); });
-$("#linkDeviceBtn")?.addEventListener("click",()=>{ openModal(); if(!currentAuthToken||Date.now()>expiresAt) gen(); });
+$("#openQrBtn")?.addEventListener("click",()=>{ openModal(); if(!currentAuthToken||Date.now()>expiresAt||qrSettled) gen(); });
+$("#linkDeviceBtn")?.addEventListener("click",()=>{ openModal(); if(!currentAuthToken||Date.now()>expiresAt||qrSettled) gen(); });
+$("#qrBack")?.addEventListener("click",()=>{
+  // Return to the live chat without touching the session (socket stays open,
+  // peer unaffected). Only visible when joinedOnce (see updateQrBack).
+  try{ sessionStorage.setItem("qrchat.inchat","1"); }catch{}
+  setGated(false);
+});
 $("#heroLinkBtn")?.addEventListener("click",gen);
 $("#qrClose")?.addEventListener("click",closeModal);
 modal?.addEventListener("click",(e)=>{ if(e.target===modal) closeModal(); });
