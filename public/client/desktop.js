@@ -325,12 +325,12 @@ function tryWs(authToken, protoTried=true){
     let opened=false;
     w.onopen=()=>{
       opened=true;
-      // Waiter is live — polling is redundant. Stop it (it restarts on
-      // early close via onclose below), cutting ~90% of status traffic.
-      if(ws===w){ pollGen++; if(pollTimer){ clearInterval(pollTimer); clearTimeout(pollTimer); } pollTimer=null; }
+      // Keep polling as fallback even when WS is live — if the DO evicts
+      // or the notify is missed, polling still advances the host to chat.
+      // (Previously polling was killed here, leaving host stuck forever.)
     };
     w.onerror=()=>{ if(useProto && !opened){ try{w.close();}catch{} openWaiter(false); } else log("waiter error"); };
-    w.onclose=()=>{ if(!qrSettled && ws===w && !opened) startPolling(authToken); };
+    w.onclose=()=>{ if(!qrSettled && ws===w) startPolling(authToken); };
     w.onmessage=(e)=>{
       try{
         const m=JSON.parse(e.data);

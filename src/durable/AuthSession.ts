@@ -365,13 +365,25 @@ export class AuthSession implements DurableObject {
 
   private notifyWaiters(data: Record<string, unknown>) {
     const msg = JSON.stringify(data);
+    // In-memory set is fast path, but it is lost on eviction. Hibernated
+    // sockets survive via getWebSockets(), so broadcast to both.
+    const seen = new Set<WebSocket>();
     for (const ws of this.waiters) {
+      seen.add(ws);
       try {
         if (ws.readyState === 1) ws.send(msg);
       } catch {
         // ignore
       }
     }
+    try {
+      for (const ws of this.state.getWebSockets()) {
+        if (seen.has(ws)) continue;
+        try {
+          if (ws.readyState === 1) ws.send(msg);
+        } catch {}
+      }
+    } catch {}
   }
 
   // Hibernation handlers
